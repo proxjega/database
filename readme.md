@@ -1,0 +1,1 @@
+naming convention: https://www.geeksforgeeks.org/cpp/naming-convention-in-c/
