@@ -23,24 +23,22 @@ struct PageHeader { // 24 bytes
 };
 
 class Page {
-friend class Database;
+    friend class Database;
+    public:
+        static constexpr uint16_t PAGE_SIZE = 4096;
+
+    private:
+        char mData[PAGE_SIZE];
+
     public:
 
-    static constexpr uint16_t PAGE_SIZE = 4096;
+        Page();    
+        Page(PageHeader header);
 
-private:
+        PageHeader* Header();
+        char* getData();
+        void setData();
 
-    char mData[PAGE_SIZE];
-
-public:
-
-    Page();    
-    Page(PageHeader header);
-
-    PageHeader* Header();
-    char* getData();
-    void setData();
-
-    bool readPageTest(char arr[4096]);
-    void CoutPage();
+        bool readPageTest(char arr[4096]);
+        void CoutPage();
 };

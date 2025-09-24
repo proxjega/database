@@ -39,7 +39,6 @@ char* Page::getData() {
 }
 
 
-
 bool Page::readPageTest(char arr[4096]) {
     PageHeader header;
     std::memcpy(&header, arr, sizeof(PageHeader));
