@@ -18,7 +18,13 @@ struct PageHeader { // 24 bytes
     uint16_t offsetToStartOfFreeSpace;
     uint16_t offsetToEndOfFreeSpace;
     int16_t offsetToStartOfSpecialSpace;
+    void CoutHeader();
+};
 
+struct MetaPageHeader {
+    uint32_t rootPageID;
+    uint32_t lastPageID;
+    uint64_t lastSequenceNumber;
     void CoutHeader();
 };
 
@@ -26,19 +32,34 @@ class Page {
     friend class Database;
     public:
         static constexpr uint16_t PAGE_SIZE = 4096;
-
-    private:
+    protected:
         char mData[PAGE_SIZE];
-
     public:
-
         Page();    
-        Page(PageHeader header);
-
-        PageHeader* Header();
+        Page(const Page &page);
+        void* Header();
         char* getData();
         void setData();
+};
 
-        bool readPageTest(char arr[4096]);
+class BasicPage : public Page{
+    friend class Database;
+    public:
+        using Page::Page;
+
+        BasicPage(Page page);
+        BasicPage(uint32_t ID, bool leaf);
+        BasicPage(PageHeader header);
+
+        PageHeader* Header();
+
         void CoutPage();
+};
+
+class MetaPage : public Page {
+    public:
+        using Page::Page;
+        MetaPage(MetaPageHeader header);
+        MetaPage(Page page);
+        MetaPageHeader* Header();
 };

@@ -1,9 +1,11 @@
 #pragma once
 
+#include "page.h"
 #include <string>
 #include <filesystem>
 
 class Page;
+class BasicPage;
 
 using std::string;
 namespace fs = std::filesystem;
@@ -22,5 +24,6 @@ public:
     const fs::path& getPath() const;
 
     Page ReadPage(uint32_t pageID);
-    bool WritePage(Page &PageToWrite);
+    bool WriteBasicPage(BasicPage &PageToWrite);
+    bool UpdateMetaPage(MetaPage &PageToWrite);
 };

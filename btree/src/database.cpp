@@ -16,6 +16,18 @@ Database::Database(const string &name) {
     fs::create_directories(folderName);
 
     ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
+
+    //create meta page
+    MetaPageHeader header;
+    header.lastPageID = 1;
+    header.rootPageID = 1;
+    header.lastSequenceNumber = 1;
+    MetaPage MetaPage(header);
+    this->UpdateMetaPage(MetaPage);
+
+    //create rootpage
+    BasicPage RootPage(1, false);
+    this->WriteBasicPage(RootPage);
 }
 
 const string& Database::getName() const {
@@ -29,15 +41,22 @@ const fs::path& Database::getPath() const {
 Page Database::ReadPage(uint32_t pageID) {
     Page ReadPage;
     ifstream databaseFile(this->getPath().string(), ios::binary);
-    databaseFile.seekg(pageID * ReadPage.PAGE_SIZE);
+    databaseFile.seekg(pageID * ReadPage.PAGE_SIZE, ios::beg);
     databaseFile.read(ReadPage.mData, ReadPage.PAGE_SIZE);
     return ReadPage;
 }
 
-bool Database::WritePage(Page &PageToWrite) {
+bool Database::WriteBasicPage(BasicPage &PageToWrite) {
     ofstream databaseFile(this->getPath().string(), ios::binary);
     uint32_t pageID = PageToWrite.Header()->pageID; // add error check
-    databaseFile.seekp(pageID * PageToWrite.PAGE_SIZE);
+    databaseFile.seekp(pageID * PageToWrite.PAGE_SIZE, ios::beg);
+    databaseFile.write(PageToWrite.mData, PageToWrite.PAGE_SIZE); //add error check
+    return true;
+}
+
+bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
+    ofstream databaseFile(this->getPath().string(), ios::binary);
+    databaseFile.seekp(0, ios::beg);
     databaseFile.write(PageToWrite.mData, PageToWrite.PAGE_SIZE); //add error check
     return true;
 }
