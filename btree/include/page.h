@@ -34,9 +34,9 @@ struct MetaPageHeader {
 struct internalNodeCell {
     string key;
     uint32_t childPointer;
-    internalNodeCell(string key) {
+    internalNodeCell(string key, uint32_t pointer) {
         this->key = key;
-        this->childPointer = -1;
+        this->childPointer = pointer;
     }
 };
 
@@ -71,7 +71,6 @@ class BasicPage : public Page{
 
         //constructors
         BasicPage(Page page);
-        BasicPage(uint32_t ID, bool leaf);
         BasicPage(PageHeader header);
 
         // pointers to data
@@ -92,7 +91,8 @@ class InternalPage : public BasicPage {
 
         InternalPage(uint32_t ID);
 
-        void InsertKeyAndPointer(string key);
+        void InsertKeyAndPointer(string key, uint32_t pointer);
+        internalNodeCell GetKeyAndPointer(uint16_t offset);
         vector<internalNodeCell>* Data();
 };
 

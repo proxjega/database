@@ -1,5 +1,3 @@
-#include <cstdint>
-#include <cstring>
 #include <iostream>
 #include "../include/page.h"
 #include "../include/database.h"
@@ -33,11 +31,8 @@ void TEST(){
     rootpage = Duombaze2.ReadPage(1);
     rootpage.Header()->CoutHeader();
 
-}
 
-int main(){
-    
-    //test4:
+    //test3: 
     Database Database1("db");
     LeafPage page1 = Database1.ReadPage(1);
    
@@ -59,5 +54,19 @@ int main(){
         cout << "offset: " << page2.Offsets()[i] << "\n"; 
         leafNodeCell cell = page2.GetKeyValue(page2.Offsets()[i]);
         cout << cell.key << ": " << cell.value << "\n";
+    }
+}
+
+int main(){
+    
+    InternalPage Page1(2);
+    Page1.InsertKeyAndPointer("zz", 5);
+    Page1.InsertKeyAndPointer("bb", 3);
+    Page1.InsertKeyAndPointer("ss", 2);
+    Page1.InsertKeyAndPointer("aa", 1);
+    for (int i = 0; i < Page1.Header()->numberOfCells; i++) {
+        cout << "offset: " << Page1.Offsets()[i] << "\n"; 
+        internalNodeCell cell = Page1.GetKeyAndPointer(Page1.Offsets()[i]);
+        cout << cell.key << ": " << cell.childPointer << "\n";
     }
 }

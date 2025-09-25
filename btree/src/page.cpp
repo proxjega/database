@@ -1,11 +1,7 @@
 #include "../include/page.h"
 #include "../include/database.h" 
-#include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
-#include <system_error>
-#include <vector>
 
 using std::memcpy;
 
@@ -62,27 +58,6 @@ BasicPage::BasicPage(Page page) {
     std::memcpy(this->mData, page.getData(), PAGE_SIZE);
 }
 
-BasicPage::BasicPage(uint32_t ID, bool leaf) {
-    PageHeader pageHeader;
-    if (leaf==false) {
-        pageHeader.pageID = ID;
-        pageHeader.isLeaf = false;
-        pageHeader.lastSequenceNumber = 1; // get from logger class
-        pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE;
-        pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-        pageHeader.offsetToStartOfSpecialSpace = -1;
-    }
-    if (leaf == true) {
-        pageHeader.pageID = ID;
-        pageHeader.isLeaf = true;
-        pageHeader.lastSequenceNumber = 1;
-        pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
-        pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-        pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
-    }
-    std::memcpy(mData, &pageHeader, sizeof(PageHeader));
-}
-
 
 PageHeader* BasicPage::Header() {
     return reinterpret_cast<PageHeader*>(mData);
@@ -115,14 +90,64 @@ InternalPage::InternalPage(uint32_t ID) {
     pageHeader.isLeaf = false;
     pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1; // get from logger class
-    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE;
+    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-sizeof(uint32_t);
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = -1;
+    pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t);
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
 }
 
-void InternalPage::InsertKeyAndPointer(string key) {
+void InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
+    uint16_t keyLength = key.length();
+    uint16_t cellLength = keyLength + sizeof(keyLength) + sizeof(pointer);
+    uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+
+    if (this->FreeSpace() < cellLength + sizeof(offset) ) {
+        cout << "Not enough space\n";
+        return;
+    }
+
+    //insert in sorted manner
+    uint16_t positionToInsert = 0;
+    for (uint16_t i = 0; i < Header()->numberOfCells; i++) {
+        if (key < GetKeyAndPointer(Offsets()[i]).key) {
+            positionToInsert = i;
+            break;
+        }
+    }
+    for (int i = Header()->numberOfCells; i > positionToInsert; i--) {
+        Offsets()[i] = Offsets()[i-1];
+    }
+    Offsets()[positionToInsert] = offset;
+
+    Header()->offsetToEndOfFreeSpace -= cellLength;
+    auto *pCurrentPosition = mData + Header()->offsetToEndOfFreeSpace;
+
+    memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
+    pCurrentPosition += sizeof(keyLength);
+
+    memcpy(pCurrentPosition, key.data(), keyLength);
+    pCurrentPosition += keyLength;
+
+    memcpy(pCurrentPosition, &pointer, sizeof(pointer));
+
+
+    Header()->numberOfCells++;
+}
+
+internalNodeCell InternalPage::GetKeyAndPointer(uint16_t offset){
+    uint16_t keyLength;
+    uint32_t pointer;
+    char* pCurrentPosition = mData + offset;
+   
+    std::memcpy(&keyLength, pCurrentPosition, sizeof(keyLength));
+    pCurrentPosition += sizeof(keyLength);
     
+    string key(pCurrentPosition, keyLength);
+    pCurrentPosition += keyLength;
+
+    std::memcpy(&pointer, pCurrentPosition, sizeof(pointer));
+
+    return internalNodeCell(key, pointer);
 }
 
 vector<internalNodeCell>* InternalPage::Data() {
@@ -137,9 +162,9 @@ LeafPage::LeafPage(uint32_t ID) {
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1;
-    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
+    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
+    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(sizeof(uint32_t));
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
 }
 
@@ -155,7 +180,7 @@ void LeafPage::InsertKeyValue(string key, string value) {
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
 
-    if (this->FreeSpace() < cellLength + sizeof(uint16_t) ) {
+    if (this->FreeSpace() < cellLength + sizeof(offset) ) {
         cout << "Not enough space\n";
         return;
     }
