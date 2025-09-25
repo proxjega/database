@@ -26,7 +26,7 @@ Database::Database(const string &name) {
     this->UpdateMetaPage(MetaPage);
 
     //create rootpage
-    BasicPage RootPage(1, false);
+    LeafPage RootPage(1);
     this->WriteBasicPage(RootPage);
 }
 

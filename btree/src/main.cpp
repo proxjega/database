@@ -1,11 +1,12 @@
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include "../include/page.h"
 #include "../include/database.h"
 
 using namespace std;
 
-int main(){
+void TEST(){
     PageHeader header;
     header.pageID=0;
     header.isLeaf = false;
@@ -35,4 +36,28 @@ int main(){
     //test3:
     BasicPage page(2, false);
     cout << page.Payload()->size() << "\n";
+}
+
+int main(){
+    
+    //test4:
+    Database Database1("db");
+    LeafPage page1 = Database1.ReadPage(1);
+    page1.InsertKey("2");
+    page1.InsertKey("3");
+    page1.InsertKey("4");
+    cout << "SIZE: " << page1.Payload()->size() << "\n";
+    for (auto a : *page1.Payload()) {
+        cout << "a: " << a << "\n"; 
+        leafNodeCell* cell;
+        std::memcpy(&cell, page1.getData()+a,sizeof(leafNodeCell));
+        cout << cell->key << "\n";
+    }
+    return 0;
+    cout <<"written.\n";
+    Database1.WriteBasicPage(page1);
+    LeafPage page2 = Database1.ReadPage(1);
+    for (auto a : *page2.Data()) {
+        cout << a.key << "\n";
+    }
 }

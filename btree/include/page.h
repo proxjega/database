@@ -30,6 +30,23 @@ struct MetaPageHeader {
     void CoutHeader();
 };
 
+struct internalNodeCell {
+    string key;
+    uint32_t childPointer;
+    internalNodeCell(string key) {
+        this->key = key;
+        this->childPointer = -1;
+    }
+};
+
+struct leafNodeCell {
+    string key;
+    string value;
+    leafNodeCell(string key) {
+        this->key = key;
+    }
+};
+
 class Page {
     friend class Database;
     public:
@@ -39,7 +56,6 @@ class Page {
     public:
         Page();    
         Page(const Page &page);
-        void* Header();
         char* getData();
         void setData();
 };
@@ -49,14 +65,41 @@ class BasicPage : public Page{
     public:
         using Page::Page;
 
+        //constructors
         BasicPage(Page page);
         BasicPage(uint32_t ID, bool leaf);
         BasicPage(PageHeader header);
 
+        // pointers to data
         PageHeader* Header();
         vector<uint16_t>* Payload();
 
+        //helpers
+        int16_t FreeSpace();
+
+        //operations
+
         void CoutPage();
+};
+
+class InternalPage : public BasicPage {
+    public:
+        using BasicPage::BasicPage;
+
+        InternalPage(uint32_t ID);
+
+        void InsertKey(string key);
+        vector<internalNodeCell>* Data();
+};
+
+class LeafPage : public BasicPage {
+    public:
+        using BasicPage::BasicPage;
+
+        LeafPage(uint32_t ID);
+
+        void InsertKey(string key);
+        vector<leafNodeCell>* Data();
 };
 
 class MetaPage : public Page {

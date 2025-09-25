@@ -88,6 +88,10 @@ vector<uint16_t>* BasicPage::Payload() {
 }
 
 
+int16_t BasicPage::FreeSpace() {
+    return this->Header()->offsetToEndOfFreeSpace - this->Header()->offsetToStartOfFreeSpace;
+}
+
 void BasicPage::CoutPage() {
     for (int i = 0; i < PAGE_SIZE; i++) {
         cout << static_cast<int>(mData[i]);
@@ -95,6 +99,59 @@ void BasicPage::CoutPage() {
             cout << "\nHEADER END\n";
         }
     }
+}
+
+// ---------------- InternalPage ----------------
+
+
+InternalPage::InternalPage(uint32_t ID) {
+    PageHeader pageHeader;
+    pageHeader.pageID = ID;
+    pageHeader.isLeaf = false;
+    pageHeader.lastSequenceNumber = 1; // get from logger class
+    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE;
+    pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
+    pageHeader.offsetToStartOfSpecialSpace = -1;
+    std::memcpy(mData, &pageHeader, sizeof(PageHeader));
+}
+
+void InternalPage::InsertKey(string key) {
+    if (this->FreeSpace() < key.length() ) return;
+    // if ( GetKey(key) == true) return; //check if key exists
+    internalNodeCell cell(key);
+    Header()->offsetToEndOfFreeSpace -=sizeof(cell);
+    Payload()->push_back(Header()->offsetToEndOfFreeSpace);
+    Data()->push_back(cell);
+}
+
+vector<internalNodeCell>* InternalPage::Data() {
+    return reinterpret_cast<vector<internalNodeCell>*>(mData + Header()->offsetToEndOfFreeSpace);
+}
+
+// ---------------- LeafPage ----------------
+
+LeafPage::LeafPage(uint32_t ID) {
+    PageHeader pageHeader;
+    pageHeader.pageID = ID;
+    pageHeader.isLeaf = true;
+    pageHeader.lastSequenceNumber = 1;
+    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
+    pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
+    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
+    std::memcpy(mData, &pageHeader, sizeof(PageHeader));
+}
+
+vector<leafNodeCell>* LeafPage::Data() {
+    return reinterpret_cast<vector<leafNodeCell>*>(mData + Header()->offsetToEndOfFreeSpace);
+}
+
+void LeafPage::InsertKey(string key) {
+    if (this->FreeSpace() < key.length() ) return;
+    // if ( GetKey(key) == true) return; //check if key exists
+    leafNodeCell cell(key);
+    Header()->offsetToEndOfFreeSpace -=sizeof(cell);
+    Payload()->push_back(Header()->offsetToEndOfFreeSpace);
+    std::memcpy(mData +Header()->offsetToEndOfFreeSpace, &cell, sizeof(cell));
 }
 
 // ---------------- MetaPage ----------------
