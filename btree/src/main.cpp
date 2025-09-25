@@ -41,20 +41,23 @@ int main(){
     Database Database1("db");
     LeafPage page1 = Database1.ReadPage(1);
    
-    page1.InsertKeyValue("key1", "val1");
+    page1.InsertKeyValue("z", "val2");
+    page1.InsertKeyValue("key4", "val2");
     page1.InsertKeyValue("key2", "val2");
+    page1.InsertKeyValue("key1", "val1");
     page1.InsertKeyValue("key3", "val3");
+    page1.InsertKeyValue("a", "val2");
     for (int i = 0; i < page1.Header()->numberOfCells; i++) {
-        cout << "offset: " << page1.Payload()[i] << "\n"; 
-        leafNodeCell cell = page1.GetKeyValue(page1.Payload()[i]);
+        cout << "offset: " << page1.Offsets()[i] << "\n"; 
+        leafNodeCell cell = page1.GetKeyValue(page1.Offsets()[i]);
         cout << cell.key << ": " << cell.value << "\n";
     }
     Database1.WriteBasicPage(page1);
     cout <<"written.\n";
     LeafPage page2 = Database1.ReadPage(1);
     for (int i = 0; i < page2.Header()->numberOfCells; i++) {
-        cout << "offset: " << page2.Payload()[i] << "\n"; 
-        leafNodeCell cell = page2.GetKeyValue(page2.Payload()[i]);
+        cout << "offset: " << page2.Offsets()[i] << "\n"; 
+        leafNodeCell cell = page2.GetKeyValue(page2.Offsets()[i]);
         cout << cell.key << ": " << cell.value << "\n";
     }
 }

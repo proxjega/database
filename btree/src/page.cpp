@@ -1,5 +1,6 @@
 #include "../include/page.h"
 #include "../include/database.h" 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -87,7 +88,7 @@ PageHeader* BasicPage::Header() {
     return reinterpret_cast<PageHeader*>(mData);
 }
 
-uint16_t* BasicPage::Payload() {
+uint16_t* BasicPage::Offsets() {
     return reinterpret_cast<uint16_t*>(mData+sizeof(PageHeader));
 }
 
@@ -120,12 +121,8 @@ InternalPage::InternalPage(uint32_t ID) {
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
 }
 
-void InternalPage::InsertKey(string key) {
-    if (this->FreeSpace() < key.length() ) return;
-    // if ( GetKey(key) == true) return; //check if key exists
-    internalNodeCell cell(key);
-    Header()->offsetToEndOfFreeSpace -=sizeof(cell);
-    std::memcpy(mData +Header()->offsetToEndOfFreeSpace, &cell, sizeof(cell));
+void InternalPage::InsertKeyAndPointer(string key) {
+    
 }
 
 vector<internalNodeCell>* InternalPage::Data() {
@@ -151,16 +148,31 @@ vector<leafNodeCell>* LeafPage::Data() {
 }
 
 void LeafPage::InsertKeyValue(string key, string value) {
-    if (this->FreeSpace() < key.length() ) {
-        cout << "Not enough space\n";
-        return;
-    }
+
     // if ( GetKey(key) == true) return; //check if key exists
-    // sort the payload!
     uint16_t keyLength = key.length();
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+
+    if (this->FreeSpace() < cellLength + sizeof(uint16_t) ) {
+        cout << "Not enough space\n";
+        return;
+    }
+
+    //insert in sorted manner
+    uint16_t positionToInsert = 0;
+    for (uint16_t i = 0; i < Header()->numberOfCells; i++) {
+        if (key < GetKeyValue(Offsets()[i]).key) {
+            positionToInsert = i;
+            break;
+        }
+    }
+    for (int i = Header()->numberOfCells; i > positionToInsert; i--) {
+        Offsets()[i] = Offsets()[i-1];
+    }
+    Offsets()[positionToInsert] = offset;
+
     Header()->offsetToEndOfFreeSpace -= cellLength;
     auto *pCurrentPosition = mData + Header()->offsetToEndOfFreeSpace;
 
@@ -175,7 +187,6 @@ void LeafPage::InsertKeyValue(string key, string value) {
 
     memcpy(pCurrentPosition, value.data(), valueLength);
 
-    Payload()[Header()->numberOfCells] = offset;
     Header()->numberOfCells++;
 }
 

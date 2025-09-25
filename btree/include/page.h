@@ -76,7 +76,7 @@ class BasicPage : public Page{
 
         // pointers to data
         PageHeader* Header();
-        uint16_t* Payload();
+        uint16_t* Offsets();
 
         //helpers
         int16_t FreeSpace();
@@ -92,7 +92,7 @@ class InternalPage : public BasicPage {
 
         InternalPage(uint32_t ID);
 
-        void InsertKey(string key);
+        void InsertKeyAndPointer(string key);
         vector<internalNodeCell>* Data();
 };
 
