@@ -27,5 +27,12 @@ int main(){
     BasicPage rootpage = Duombaze2.ReadPage(1);
     metapage.Header()->CoutHeader();
     rootpage.Header()->CoutHeader();
+    rootpage.Header()->isLeaf=true;
+    Duombaze2.WriteBasicPage(rootpage);
+    rootpage = Duombaze2.ReadPage(1);
+    rootpage.Header()->CoutHeader();
 
+    //test3:
+    BasicPage page(2, false);
+    cout << page.Payload()->size() << "\n";
 }

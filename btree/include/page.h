@@ -5,11 +5,13 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <vector>
 
 class Database;
 
 using std::cout;
 using std::string;
+using std::vector;
 
 struct PageHeader { // 24 bytes
     uint64_t lastSequenceNumber;
@@ -52,6 +54,7 @@ class BasicPage : public Page{
         BasicPage(PageHeader header);
 
         PageHeader* Header();
+        vector<uint16_t>* Payload();
 
         void CoutPage();
 };

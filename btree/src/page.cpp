@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <vector>
 
 // ---------------- PageHeader ----------------
 void PageHeader::CoutHeader() {
@@ -81,6 +82,11 @@ BasicPage::BasicPage(uint32_t ID, bool leaf) {
 PageHeader* BasicPage::Header() {
     return reinterpret_cast<PageHeader*>(mData);
 }
+
+vector<uint16_t>* BasicPage::Payload() {
+    return reinterpret_cast<vector<uint16_t>*>(mData+sizeof(PageHeader));
+}
+
 
 void BasicPage::CoutPage() {
     for (int i = 0; i < PAGE_SIZE; i++) {
