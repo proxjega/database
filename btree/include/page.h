@@ -17,6 +17,7 @@ struct PageHeader { // 24 bytes
     uint64_t lastSequenceNumber;
     bool isLeaf;
     uint32_t pageID;
+    uint16_t numberOfCells;
     uint16_t offsetToStartOfFreeSpace;
     uint16_t offsetToEndOfFreeSpace;
     int16_t offsetToStartOfSpecialSpace;
@@ -42,10 +43,13 @@ struct internalNodeCell {
 struct leafNodeCell {
     string key;
     string value;
-    leafNodeCell(string key) {
+    leafNodeCell(string key, string value) {
         this->key = key;
+        this->value = value;
     }
 };
+
+
 
 class Page {
     friend class Database;
@@ -72,7 +76,7 @@ class BasicPage : public Page{
 
         // pointers to data
         PageHeader* Header();
-        vector<uint16_t>* Payload();
+        uint16_t* Payload();
 
         //helpers
         int16_t FreeSpace();
@@ -98,7 +102,8 @@ class LeafPage : public BasicPage {
 
         LeafPage(uint32_t ID);
 
-        void InsertKey(string key);
+        void InsertKeyValue(string key, string value);
+        leafNodeCell GetKeyValue(uint16_t offset);
         vector<leafNodeCell>* Data();
 };
 

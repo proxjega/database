@@ -3,13 +3,17 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <system_error>
 #include <vector>
+
+using std::memcpy;
 
 // ---------------- PageHeader ----------------
 void PageHeader::CoutHeader() {
     cout << "lastSequenceNumber: " << lastSequenceNumber << "\n"
          << "isLeaf: " << isLeaf << "\n"
          << "pageID: " << pageID << "\n"
+         << "numberOfCells: " << numberOfCells << "\n"
          << "offsetToStartOfFreeSpace: " << offsetToStartOfFreeSpace << "\n"
          << "offsetToEndOfFreeSpace: " << offsetToEndOfFreeSpace << "\n"
          << "offsetToStartOfSpecialSpace: " << offsetToStartOfSpecialSpace << "\n\n";
@@ -83,8 +87,8 @@ PageHeader* BasicPage::Header() {
     return reinterpret_cast<PageHeader*>(mData);
 }
 
-vector<uint16_t>* BasicPage::Payload() {
-    return reinterpret_cast<vector<uint16_t>*>(mData+sizeof(PageHeader));
+uint16_t* BasicPage::Payload() {
+    return reinterpret_cast<uint16_t*>(mData+sizeof(PageHeader));
 }
 
 
@@ -108,6 +112,7 @@ InternalPage::InternalPage(uint32_t ID) {
     PageHeader pageHeader;
     pageHeader.pageID = ID;
     pageHeader.isLeaf = false;
+    pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1; // get from logger class
     pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE;
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
@@ -120,8 +125,7 @@ void InternalPage::InsertKey(string key) {
     // if ( GetKey(key) == true) return; //check if key exists
     internalNodeCell cell(key);
     Header()->offsetToEndOfFreeSpace -=sizeof(cell);
-    Payload()->push_back(Header()->offsetToEndOfFreeSpace);
-    Data()->push_back(cell);
+    std::memcpy(mData +Header()->offsetToEndOfFreeSpace, &cell, sizeof(cell));
 }
 
 vector<internalNodeCell>* InternalPage::Data() {
@@ -134,6 +138,7 @@ LeafPage::LeafPage(uint32_t ID) {
     PageHeader pageHeader;
     pageHeader.pageID = ID;
     pageHeader.isLeaf = true;
+    pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1;
     pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(2*sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
@@ -145,14 +150,52 @@ vector<leafNodeCell>* LeafPage::Data() {
     return reinterpret_cast<vector<leafNodeCell>*>(mData + Header()->offsetToEndOfFreeSpace);
 }
 
-void LeafPage::InsertKey(string key) {
-    if (this->FreeSpace() < key.length() ) return;
+void LeafPage::InsertKeyValue(string key, string value) {
+    if (this->FreeSpace() < key.length() ) {
+        cout << "Not enough space\n";
+        return;
+    }
     // if ( GetKey(key) == true) return; //check if key exists
-    leafNodeCell cell(key);
-    Header()->offsetToEndOfFreeSpace -=sizeof(cell);
-    Payload()->push_back(Header()->offsetToEndOfFreeSpace);
-    std::memcpy(mData +Header()->offsetToEndOfFreeSpace, &cell, sizeof(cell));
+    // sort the payload!
+    uint16_t keyLength = key.length();
+    uint16_t valueLength = value.length();
+    uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
+    uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+    Header()->offsetToEndOfFreeSpace -= cellLength;
+    auto *pCurrentPosition = mData + Header()->offsetToEndOfFreeSpace;
+
+    memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
+    pCurrentPosition += sizeof(keyLength);
+
+    memcpy(pCurrentPosition, key.data(), keyLength);
+    pCurrentPosition += keyLength;
+
+    memcpy(pCurrentPosition, &valueLength, sizeof(valueLength));
+    pCurrentPosition += sizeof(valueLength);
+
+    memcpy(pCurrentPosition, value.data(), valueLength);
+
+    Payload()[Header()->numberOfCells] = offset;
+    Header()->numberOfCells++;
 }
+
+leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
+    uint16_t keyLength, valueLength;
+    char* pCurrentPosition = mData + offset;
+   
+    std::memcpy(&keyLength, pCurrentPosition, sizeof(keyLength));
+    pCurrentPosition += sizeof(keyLength);
+    
+    string key(pCurrentPosition, keyLength);
+    pCurrentPosition += keyLength;
+
+    std::memcpy(&valueLength, pCurrentPosition, sizeof(valueLength));
+    pCurrentPosition += sizeof(valueLength);
+
+    string value(pCurrentPosition, valueLength);
+    return leafNodeCell(key, value);
+}
+
 
 // ---------------- MetaPage ----------------
 

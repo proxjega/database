@@ -33,9 +33,6 @@ void TEST(){
     rootpage = Duombaze2.ReadPage(1);
     rootpage.Header()->CoutHeader();
 
-    //test3:
-    BasicPage page(2, false);
-    cout << page.Payload()->size() << "\n";
 }
 
 int main(){
@@ -43,21 +40,21 @@ int main(){
     //test4:
     Database Database1("db");
     LeafPage page1 = Database1.ReadPage(1);
-    page1.InsertKey("2");
-    page1.InsertKey("3");
-    page1.InsertKey("4");
-    cout << "SIZE: " << page1.Payload()->size() << "\n";
-    for (auto a : *page1.Payload()) {
-        cout << "a: " << a << "\n"; 
-        leafNodeCell* cell;
-        std::memcpy(&cell, page1.getData()+a,sizeof(leafNodeCell));
-        cout << cell->key << "\n";
+   
+    page1.InsertKeyValue("key1", "val1");
+    page1.InsertKeyValue("key2", "val2");
+    page1.InsertKeyValue("key3", "val3");
+    for (int i = 0; i < page1.Header()->numberOfCells; i++) {
+        cout << "offset: " << page1.Payload()[i] << "\n"; 
+        leafNodeCell cell = page1.GetKeyValue(page1.Payload()[i]);
+        cout << cell.key << ": " << cell.value << "\n";
     }
-    return 0;
-    cout <<"written.\n";
     Database1.WriteBasicPage(page1);
+    cout <<"written.\n";
     LeafPage page2 = Database1.ReadPage(1);
-    for (auto a : *page2.Data()) {
-        cout << a.key << "\n";
+    for (int i = 0; i < page2.Header()->numberOfCells; i++) {
+        cout << "offset: " << page2.Payload()[i] << "\n"; 
+        leafNodeCell cell = page2.GetKeyValue(page2.Payload()[i]);
+        cout << cell.key << ": " << cell.value << "\n";
     }
 }
