@@ -26,4 +26,7 @@ public:
     Page ReadPage(uint32_t pageID);
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
+
+    std::optional<leafNodeCell> Get(string key);
+    bool Set(string key, string value);
 };

@@ -55,18 +55,24 @@ void TEST(){
         leafNodeCell cell = page2.GetKeyValue(page2.Offsets()[i]);
         cout << cell.key << ": " << cell.value << "\n";
     }
+
+    //test4:
+    InternalPage Page3(2);
+    Page3.InsertKeyAndPointer("zz", 5);
+    Page3.InsertKeyAndPointer("bb", 3);
+    Page3.InsertKeyAndPointer("ss", 2);
+    Page3.InsertKeyAndPointer("aa", 1);
+    for (int i = 0; i < Page3.Header()->numberOfCells; i++) {
+        cout << "offset: " << Page3.Offsets()[i] << "\n"; 
+        internalNodeCell cell = Page3.GetKeyAndPointer(Page3.Offsets()[i]);
+        cout << cell.key << ": " << cell.childPointer << "\n";
+    }
 }
 
 int main(){
-    
-    InternalPage Page1(2);
-    Page1.InsertKeyAndPointer("zz", 5);
-    Page1.InsertKeyAndPointer("bb", 3);
-    Page1.InsertKeyAndPointer("ss", 2);
-    Page1.InsertKeyAndPointer("aa", 1);
-    for (int i = 0; i < Page1.Header()->numberOfCells; i++) {
-        cout << "offset: " << Page1.Offsets()[i] << "\n"; 
-        internalNodeCell cell = Page1.GetKeyAndPointer(Page1.Offsets()[i]);
-        cout << cell.key << ": " << cell.childPointer << "\n";
-    }
+    TEST();
+    Database Database1("Database");
+    MetaPage page1 = Database1.ReadPage(0);
+    bool cell = Database1.Get("aa").has_value();
+    cout << cell;
 }

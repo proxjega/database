@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <string>
 #include <iostream>
 #include <fstream>
@@ -76,6 +77,7 @@ class BasicPage : public Page{
         // pointers to data
         PageHeader* Header();
         uint16_t* Offsets();
+        uint32_t* Special();
 
         //helpers
         int16_t FreeSpace();
@@ -91,9 +93,10 @@ class InternalPage : public BasicPage {
 
         InternalPage(uint32_t ID);
 
+        std::optional<internalNodeCell> FindKey(string key);
+        uint16_t FindInsertPosition(const string& key);
         void InsertKeyAndPointer(string key, uint32_t pointer);
         internalNodeCell GetKeyAndPointer(uint16_t offset);
-        vector<internalNodeCell>* Data();
 };
 
 class LeafPage : public BasicPage {
@@ -102,9 +105,10 @@ class LeafPage : public BasicPage {
 
         LeafPage(uint32_t ID);
 
+        uint16_t FindInsertPosition(const string& key);
         void InsertKeyValue(string key, string value);
         leafNodeCell GetKeyValue(uint16_t offset);
-        vector<leafNodeCell>* Data();
+        std::optional<leafNodeCell> FindKey(string key);
 };
 
 class MetaPage : public Page {

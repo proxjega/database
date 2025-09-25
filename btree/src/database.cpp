@@ -1,5 +1,8 @@
 #include "../include/database.h"
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
+#include <optional>
 #include "../include/page.h" // Only include in .cpp if needed
 
 using std::ofstream;
@@ -24,7 +27,6 @@ Database::Database(const string &name) {
     header.lastSequenceNumber = 1;
     MetaPage MetaPage(header);
     this->UpdateMetaPage(MetaPage);
-
     //create rootpage
     LeafPage RootPage(1);
     this->WriteBasicPage(RootPage);
@@ -47,16 +49,36 @@ Page Database::ReadPage(uint32_t pageID) {
 }
 
 bool Database::WriteBasicPage(BasicPage &PageToWrite) {
-    ofstream databaseFile(this->getPath().string(), ios::binary);
+    ofstream databaseFile(this->getPath().string(), ios::binary | ios::app);
     uint32_t pageID = PageToWrite.Header()->pageID; // add error check
-    databaseFile.seekp(pageID * PageToWrite.PAGE_SIZE, ios::beg);
+    databaseFile.seekp(pageID * PageToWrite.PAGE_SIZE);
     databaseFile.write(PageToWrite.mData, PageToWrite.PAGE_SIZE); //add error check
     return true;
 }
 
 bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
-    ofstream databaseFile(this->getPath().string(), ios::binary);
+    ofstream databaseFile(this->getPath().string(), ios::binary | ios::app);
     databaseFile.seekp(0, ios::beg);
     databaseFile.write(PageToWrite.mData, PageToWrite.PAGE_SIZE); //add error check
     return true;
+}
+
+std::optional<leafNodeCell> Database::Get(string key){
+    MetaPage MetaPage = this->ReadPage(0);
+    uint32_t rootPageID = MetaPage.Header()->rootPageID;
+    BasicPage rootPage = this->ReadPage(rootPageID);
+    if (rootPage.Header()->isLeaf==true) {
+        LeafPage Page(rootPage);
+        return Page.FindKey(key);
+    }
+    else {
+        InternalPage Page(rootPage);
+        Page.FindKey(key);
+        // InternalPage.FindPointer or smth
+    }
+    return std::nullopt;
+}
+
+bool Database::Set(string key, string value){
+
 }

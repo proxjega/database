@@ -1,7 +1,10 @@
 #include "../include/page.h"
 #include "../include/database.h" 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <algorithm>
 
 using std::memcpy;
 
@@ -67,10 +70,16 @@ uint16_t* BasicPage::Offsets() {
     return reinterpret_cast<uint16_t*>(mData+sizeof(PageHeader));
 }
 
+uint32_t* BasicPage::Special(){
+    return reinterpret_cast<uint32_t*>(mData+Header()->offsetToStartOfSpecialSpace);
+}
 
 int16_t BasicPage::FreeSpace() {
     return this->Header()->offsetToEndOfFreeSpace - this->Header()->offsetToStartOfFreeSpace;
 }
+
+
+
 
 void BasicPage::CoutPage() {
     for (int i = 0; i < PAGE_SIZE; i++) {
@@ -92,7 +101,7 @@ InternalPage::InternalPage(uint32_t ID) {
     pageHeader.lastSequenceNumber = 1; // get from logger class
     pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-sizeof(uint32_t);
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t);
+    pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t); // last child pointer
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
 }
 
@@ -107,13 +116,8 @@ void InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     }
 
     //insert in sorted manner
-    uint16_t positionToInsert = 0;
-    for (uint16_t i = 0; i < Header()->numberOfCells; i++) {
-        if (key < GetKeyAndPointer(Offsets()[i]).key) {
-            positionToInsert = i;
-            break;
-        }
-    }
+    uint16_t positionToInsert = FindInsertPosition(key);
+
     for (int i = Header()->numberOfCells; i > positionToInsert; i--) {
         Offsets()[i] = Offsets()[i-1];
     }
@@ -150,8 +154,33 @@ internalNodeCell InternalPage::GetKeyAndPointer(uint16_t offset){
     return internalNodeCell(key, pointer);
 }
 
-vector<internalNodeCell>* InternalPage::Data() {
-    return reinterpret_cast<vector<internalNodeCell>*>(mData + Header()->offsetToEndOfFreeSpace);
+uint16_t InternalPage::FindInsertPosition(const std::string& key) {
+    auto begin = Offsets();
+    auto end = Offsets() + Header()->numberOfCells;
+
+    auto it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
+        return GetKeyAndPointer(offset).key < k;
+    });
+
+    return static_cast<uint16_t>(it - begin);
+}
+//fix
+std::optional<internalNodeCell> InternalPage::FindKey(string key){
+    int low = 0;
+    int high = Header()->numberOfCells - 1;
+    while (low <= high) {
+        int mid = low + (high - low) / 2;
+
+        if (GetKeyAndPointer(Offsets()[mid]).key == key)
+            return GetKeyAndPointer(Offsets()[mid]);
+
+        if (GetKeyAndPointer(Offsets()[mid]).key < key)
+            low = mid + 1;
+
+        else
+            high = mid - 1;
+    }
+    return std::nullopt;
 }
 
 // ---------------- LeafPage ----------------
@@ -164,13 +193,10 @@ LeafPage::LeafPage(uint32_t ID) {
     pageHeader.lastSequenceNumber = 1;
     pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(sizeof(uint32_t));
+    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
 }
 
-vector<leafNodeCell>* LeafPage::Data() {
-    return reinterpret_cast<vector<leafNodeCell>*>(mData + Header()->offsetToEndOfFreeSpace);
-}
 
 void LeafPage::InsertKeyValue(string key, string value) {
 
@@ -186,13 +212,8 @@ void LeafPage::InsertKeyValue(string key, string value) {
     }
 
     //insert in sorted manner
-    uint16_t positionToInsert = 0;
-    for (uint16_t i = 0; i < Header()->numberOfCells; i++) {
-        if (key < GetKeyValue(Offsets()[i]).key) {
-            positionToInsert = i;
-            break;
-        }
-    }
+    uint16_t positionToInsert = FindInsertPosition(key);
+    
     for (int i = Header()->numberOfCells; i > positionToInsert; i--) {
         Offsets()[i] = Offsets()[i-1];
     }
@@ -232,6 +253,34 @@ leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
     return leafNodeCell(key, value);
 }
 
+std::optional<leafNodeCell> LeafPage::FindKey(string key){
+    int low = 0;
+    int high = Header()->numberOfCells - 1;
+    while (low <= high) {
+        int mid = low + (high - low) / 2;
+
+        if (GetKeyValue(Offsets()[mid]).key == key)
+            return GetKeyValue(Offsets()[mid]);
+
+        if (GetKeyValue(Offsets()[mid]).key < key)
+            low = mid + 1;
+
+        else
+            high = mid - 1;
+    }
+    return std::nullopt;
+}
+
+uint16_t LeafPage::FindInsertPosition(const std::string& key) {
+    auto begin = Offsets();
+    auto end = Offsets() + Header()->numberOfCells;
+
+    auto it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
+        return GetKeyValue(offset).key < k;
+    });
+
+    return static_cast<uint16_t>(it - begin);
+}
 
 // ---------------- MetaPage ----------------
 
@@ -240,7 +289,7 @@ MetaPage::MetaPage(MetaPageHeader header) {
 }
 
 MetaPage::MetaPage(Page page) {
-    std::memcpy(this->mData, page.getData(), PAGE_SIZE);
+    std::memcpy(mData, page.getData(), PAGE_SIZE);
 }
 
 MetaPageHeader* MetaPage::Header() {
