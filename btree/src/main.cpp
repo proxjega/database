@@ -8,33 +8,38 @@ using namespace std;
 
 void TEST(){
     PageHeader header;
-    header.pageID=0;
+    header.pageID=1;
     header.isLeaf = false;
     header.lastSequenceNumber = 1;
     header.offsetToStartOfFreeSpace = sizeof(PageHeader);
     header.offsetToEndOfFreeSpace = 4096;
     header.offsetToStartOfSpecialSpace = -1;
     //test1:
+    
+    cout << "\n\nTEST1:\n";
     Database Duombaze("duombaze1");
     BasicPage Page1(header);
     Page1.Header()->CoutHeader();
     Duombaze.WriteBasicPage(Page1);
-    BasicPage Page2 = Duombaze.ReadPage(0);
+    BasicPage Page2 = Duombaze.ReadPage(1);
     Page2.Header()->CoutHeader();
 
     //test2:
+    cout << "\n\nTEST2:\n";
     Database Duombaze2("duombaze2");
     MetaPage metapage = Duombaze2.ReadPage(0);
     BasicPage rootpage = Duombaze2.ReadPage(1);
     metapage.Header()->CoutHeader();
     rootpage.Header()->CoutHeader();
     rootpage.Header()->isLeaf=true;
+    Duombaze2.UpdateMetaPage(metapage);
     Duombaze2.WriteBasicPage(rootpage);
     rootpage = Duombaze2.ReadPage(1);
     rootpage.Header()->CoutHeader();
 
 
     //test3: 
+    cout << "\n\nTEST3:\n";
     Database Database1("db");
     LeafPage page1 = Database1.ReadPage(1);
    
@@ -59,6 +64,7 @@ void TEST(){
     }
 
     //test4:
+    cout << "\n\nTEST4:\n";
     InternalPage Page3(2);
     Page3.InsertKeyAndPointer("cc", 5);
     Page3.InsertKeyAndPointer("bb", 3);
@@ -70,21 +76,38 @@ void TEST(){
         internalNodeCell cell = Page3.GetKeyAndPointer(Page3.Offsets()[i]);
         cout << cell.key << ": " << cell.childPointer << "\n";
     }
+
+    //test5:
+    cout << "\n\nTEST5:\n";
+    InternalPage Page4(1);
+    Page4.InsertKeyAndPointer("aa", 1);
+    Page4.InsertKeyAndPointer("xx", 2);
+    Page4.InsertKeyAndPointer("bb", 3);
+    Page4.InsertKeyAndPointer("dd", 4);
+    auto cell = Page4.FindPointerByKey("aa");
+    cout << cell << "\n";
+    cell = Page4.FindPointerByKey("dd");
+    cout <<  cell << "\n";
+    cell = Page4.FindPointerByKey("zz");
+    cout << cell << "\n";
 }
 
 int main(){
-    // TEST();
-    InternalPage Page1(1);
-    Page1.InsertKeyAndPointer("aa", 1);
-    Page1.InsertKeyAndPointer("xx", 2);
-    Page1.InsertKeyAndPointer("bb", 3);
-    Page1.InsertKeyAndPointer("dd", 4);
-    auto cell = Page1.FindPointerByKey("aa");
-    cout << cell << "\n";
-    cell = Page1.FindPointerByKey("dd");
-    cout <<  cell << "\n";
-    cell = Page1.FindPointerByKey("zz");
-    cout << cell << "\n";
-
+    TEST();
+    Database Database1("db");
+    LeafPage page1 = Database1.ReadPage(1);
+   
+    page1.InsertKeyValue("z", "val2");
+    page1.InsertKeyValue("key4", "val2");
+    page1.InsertKeyValue("key2", "val2");
+    page1.InsertKeyValue("key1", "val1");
+    page1.InsertKeyValue("key3", "val3");
+    page1.InsertKeyValue("a", "val2");
+    bool check = Database1.WriteBasicPage(page1);
+    if (!check) cout << "ERROR\n";
+    auto get = Database1.Get("z");
+    if (get.has_value()) cout << "Has\n";
+    else
+    cout << get.value().key << ":" << get.value().value;
 
 }

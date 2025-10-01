@@ -45,8 +45,10 @@ void InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     }
     Offsets()[positionToInsert] = offset;
 
+    Header()->offsetToStartOfFreeSpace += sizeof(offset);
     Header()->offsetToEndOfFreeSpace -= cellLength;
-    auto *pCurrentPosition = mData + Header()->offsetToEndOfFreeSpace;
+
+    auto *pCurrentPosition = mData + offset;
 
     memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
     pCurrentPosition += sizeof(keyLength);

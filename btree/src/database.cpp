@@ -42,18 +42,39 @@ const fs::path& Database::getPath() const {
 }
 
 Page Database::ReadPage(uint32_t pageID) {
-    Page ReadPage;
-    ifstream databaseFile(this->getPath().string(), ios::binary);
-    databaseFile.seekg(pageID * ReadPage.PAGE_SIZE, ios::beg);
-    databaseFile.read(ReadPage.mData, ReadPage.PAGE_SIZE);
-    return ReadPage;
+    Page page;
+
+    ifstream databaseFile(this->getPath(), ios::in | ios::binary);
+    if (!databaseFile) {
+        throw std::runtime_error("Failed to open database file for reading");
+    }
+
+    databaseFile.seekg(pageID * Page::PAGE_SIZE, ios::beg);
+    if (!databaseFile.good()) {
+        throw std::runtime_error("Seek failed in ReadPage");
+    }
+
+    databaseFile.read(page.mData, Page::PAGE_SIZE);
+    if (!databaseFile) {
+        throw std::runtime_error("Read failed in ReadPage");
+    }
+
+    return page;
 }
 
-bool Database::WriteBasicPage(BasicPage &PageToWrite) {
-    ofstream databaseFile(this->getPath().string(), ios::binary | ios::app);
-    uint32_t pageID = PageToWrite.Header()->pageID; // add error check
-    databaseFile.seekp(pageID * PageToWrite.PAGE_SIZE);
-    databaseFile.write(PageToWrite.mData, PageToWrite.PAGE_SIZE); //add error check
+bool Database::WriteBasicPage(BasicPage &pageToWrite) {
+    ofstream databaseFile(this->getPath(), ios::out | ios::binary);
+    if (!databaseFile) {
+        return false; // could not open
+    }
+
+    uint32_t pageID = pageToWrite.Header()->pageID;
+    databaseFile.seekp(pageID * Page::PAGE_SIZE, ios::beg);
+    if (!databaseFile.good()) return false;
+
+    databaseFile.write(pageToWrite.mData, Page::PAGE_SIZE);
+    if (!databaseFile) return false;
+
     return true;
 }
 
@@ -67,17 +88,19 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
 std::optional<leafNodeCell> Database::Get(string key){
     MetaPage MetaPage = this->ReadPage(0);
     uint32_t rootPageID = MetaPage.Header()->rootPageID;
-    BasicPage rootPage = this->ReadPage(rootPageID);
-    if (rootPage.Header()->isLeaf==true) {
-        LeafPage Page(rootPage);
-        return Page.FindKey(key);
+    BasicPage currentPage = this->ReadPage(rootPageID);
+    while (currentPage.Header()->isLeaf != true){
+        InternalPage Page(currentPage);
+        uint32_t pageID = Page.FindPointerByKey(key);
+        currentPage = this->ReadPage(pageID);
     }
+    LeafPage Page(currentPage);
+    auto cell = Page.FindKey(key);
+    if (cell.has_value()) return cell;
     else {
-        InternalPage Page(rootPage);
-        Page.FindPointerByKey(key);
-        // InternalPage.FindPointer or smth
+        cout << "Key not found!\n";
+        return std::nullopt;
     }
-    return std::nullopt;
 }
 
 bool Database::Set(string key, string value){
