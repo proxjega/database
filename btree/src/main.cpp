@@ -81,7 +81,7 @@ int main(){
     Page1.InsertKeyAndPointer("dd", 4);
     auto cell = Page1.FindPointerByKey("aa");
     cout << cell << "\n";
-    cell = Page1.FindPointerByKey("bb");
+    cell = Page1.FindPointerByKey("dd");
     cout <<  cell << "\n";
     cell = Page1.FindPointerByKey("zz");
     cout << cell << "\n";

@@ -100,7 +100,7 @@ uint16_t InternalPage::FindInsertPosition(const std::string& key) {
 }
 
 /**
- * @brief Returns the pointer to the child with given key.
+ * @brief Returns the pointer to the child with given key. If the key is present in this node, gives pointer to smaller (left)child
  * 
  * @param key key that needed to be found
  * @return uint32_t PageID with that key 
