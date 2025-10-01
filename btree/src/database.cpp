@@ -1,9 +1,10 @@
 #include "../include/database.h"
-#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <optional>
-#include "../include/page.h" // Only include in .cpp if needed
+#include "../include/page.h"
+#include "../include/internalpage.h"
+#include "../include/leafpage.h"
 
 using std::ofstream;
 using std::ios;

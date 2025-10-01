@@ -1,5 +1,7 @@
 #include <iostream>
 #include "../include/page.h"
+#include "../include/leafpage.h"
+#include "../include/internalpage.h"
 #include "../include/database.h"
 
 using namespace std;

@@ -14,6 +14,10 @@ using std::cout;
 using std::string;
 using std::vector;
 
+/**
+ * @brief Struct for header of basic page.
+ * 
+ */
 struct PageHeader { // 24 bytes
     uint64_t lastSequenceNumber;
     bool isLeaf;
@@ -25,6 +29,10 @@ struct PageHeader { // 24 bytes
     void CoutHeader();
 };
 
+/**
+ * @brief Struct for header of meta page
+ * 
+ */
 struct MetaPageHeader {
     uint32_t rootPageID;
     uint32_t lastPageID;
@@ -32,6 +40,10 @@ struct MetaPageHeader {
     void CoutHeader();
 };
 
+/**
+ * @brief Struct of internal page's node (key:childpointer pair)
+ * 
+ */
 struct internalNodeCell {
     string key;
     uint32_t childPointer;
@@ -41,6 +53,10 @@ struct internalNodeCell {
     }
 };
 
+/**
+ * @brief struct for leaf page's node (key:value pair)
+ * 
+ */
 struct leafNodeCell {
     string key;
     string value;
@@ -50,8 +66,10 @@ struct leafNodeCell {
     }
 };
 
-
-
+/**
+ * @brief Base Page class. Has data array and few basic set get methods
+ * 
+ */
 class Page {
     friend class Database;
     public:
@@ -65,6 +83,10 @@ class Page {
         void setData();
 };
 
+/**
+ * @brief BasicPage class for all the pages in database excluding first one (metapage). Is base class for InternalPage and LeafPage.
+ * 
+ */
 class BasicPage : public Page{
     friend class Database;
     public:
@@ -87,30 +109,10 @@ class BasicPage : public Page{
         void CoutPage();
 };
 
-class InternalPage : public BasicPage {
-    public:
-        using BasicPage::BasicPage;
-
-        InternalPage(uint32_t ID);
-
-        uint32_t FindPointerByKey(const string &key);
-        uint16_t FindInsertPosition(const string& key);
-        void InsertKeyAndPointer(string key, uint32_t pointer);
-        internalNodeCell GetKeyAndPointer(uint16_t offset);
-};
-
-class LeafPage : public BasicPage {
-    public:
-        using BasicPage::BasicPage;
-
-        LeafPage(uint32_t ID);
-
-        uint16_t FindInsertPosition(const string& key);
-        void InsertKeyValue(string key, string value);
-        leafNodeCell GetKeyValue(uint16_t offset);
-        std::optional<leafNodeCell> FindKey(const string &key);
-};
-
+/**
+ * @brief MetaPage class for first page in database. Metapage stores some info about database.
+ * 
+ */
 class MetaPage : public Page {
     public:
         using Page::Page;
