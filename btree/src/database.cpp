@@ -73,7 +73,7 @@ std::optional<leafNodeCell> Database::Get(string key){
     }
     else {
         InternalPage Page(rootPage);
-        Page.FindKey(key);
+        Page.FindPointerByKey(key);
         // InternalPage.FindPointer or smth
     }
     return std::nullopt;

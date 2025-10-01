@@ -58,21 +58,31 @@ void TEST(){
 
     //test4:
     InternalPage Page3(2);
-    Page3.InsertKeyAndPointer("zz", 5);
+    Page3.InsertKeyAndPointer("cc", 5);
     Page3.InsertKeyAndPointer("bb", 3);
     Page3.InsertKeyAndPointer("ss", 2);
     Page3.InsertKeyAndPointer("aa", 1);
+    Page3.InsertKeyAndPointer("zz", 1);
     for (int i = 0; i < Page3.Header()->numberOfCells; i++) {
-        cout << "offset: " << Page3.Offsets()[i] << "\n"; 
+        cout << "offset: " << Page3.Offsets()[i] << ", "; 
         internalNodeCell cell = Page3.GetKeyAndPointer(Page3.Offsets()[i]);
         cout << cell.key << ": " << cell.childPointer << "\n";
     }
 }
 
 int main(){
-    TEST();
-    Database Database1("Database");
-    MetaPage page1 = Database1.ReadPage(0);
-    bool cell = Database1.Get("aa").has_value();
-    cout << cell;
+    // TEST();
+    InternalPage Page1(1);
+    Page1.InsertKeyAndPointer("aa", 1);
+    Page1.InsertKeyAndPointer("xx", 2);
+    Page1.InsertKeyAndPointer("bb", 3);
+    Page1.InsertKeyAndPointer("dd", 4);
+    auto cell = Page1.FindPointerByKey("aa");
+    cout << cell << "\n";
+    cell = Page1.FindPointerByKey("bb");
+    cout <<  cell << "\n";
+    cell = Page1.FindPointerByKey("zz");
+    cout << cell << "\n";
+
+
 }

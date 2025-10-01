@@ -93,7 +93,7 @@ class InternalPage : public BasicPage {
 
         InternalPage(uint32_t ID);
 
-        std::optional<internalNodeCell> FindKey(string key);
+        uint32_t FindPointerByKey(const string &key);
         uint16_t FindInsertPosition(const string& key);
         void InsertKeyAndPointer(string key, uint32_t pointer);
         internalNodeCell GetKeyAndPointer(uint16_t offset);
@@ -108,7 +108,7 @@ class LeafPage : public BasicPage {
         uint16_t FindInsertPosition(const string& key);
         void InsertKeyValue(string key, string value);
         leafNodeCell GetKeyValue(uint16_t offset);
-        std::optional<leafNodeCell> FindKey(string key);
+        std::optional<leafNodeCell> FindKey(const string &key);
 };
 
 class MetaPage : public Page {

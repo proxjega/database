@@ -164,23 +164,17 @@ uint16_t InternalPage::FindInsertPosition(const std::string& key) {
 
     return static_cast<uint16_t>(it - begin);
 }
-//fix
-std::optional<internalNodeCell> InternalPage::FindKey(string key){
-    int low = 0;
-    int high = Header()->numberOfCells - 1;
-    while (low <= high) {
-        int mid = low + (high - low) / 2;
 
-        if (GetKeyAndPointer(Offsets()[mid]).key == key)
-            return GetKeyAndPointer(Offsets()[mid]);
+//fixed
+uint32_t InternalPage::FindPointerByKey(const string &key){
+    auto begin = Offsets();
+    auto end = Offsets() + Header()->numberOfCells;
 
-        if (GetKeyAndPointer(Offsets()[mid]).key < key)
-            low = mid + 1;
-
-        else
-            high = mid - 1;
-    }
-    return std::nullopt;
+    auto it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
+        return GetKeyAndPointer(offset).key < k;
+    });
+    if (it == end) return *Special(); //return special pointer if it the key is bigger than everyone else
+    return GetKeyAndPointer(*it).childPointer;
 }
 
 // ---------------- LeafPage ----------------
@@ -253,7 +247,7 @@ leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
     return leafNodeCell(key, value);
 }
 
-std::optional<leafNodeCell> LeafPage::FindKey(string key){
+std::optional<leafNodeCell> LeafPage::FindKey(const string &key){
     int low = 0;
     int high = Header()->numberOfCells - 1;
     while (low <= high) {
