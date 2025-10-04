@@ -93,7 +93,7 @@ void TEST(){
 }
 
 int main(){
-    TEST();
+    //WTEST();
     Database Database1("db");
     LeafPage page1 = Database1.ReadPage(1);
    
@@ -105,7 +105,7 @@ int main(){
     page1.InsertKeyValue("a", "val2");
     bool check = Database1.WriteBasicPage(page1);
     if (!check) cout << "ERROR\n";
-    auto get = Database1.Get("z");
+    auto get = Database1.Get("z"); //infinite loop!
     if (get.has_value()) cout << "Has\n";
     else
     cout << get.value().key << ":" << get.value().value;

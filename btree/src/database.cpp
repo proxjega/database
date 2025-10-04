@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <fstream>
 #include <optional>
+#include <stdexcept>
 #include "../include/page.h"
 #include "../include/internalpage.h"
 #include "../include/leafpage.h"
@@ -20,17 +21,17 @@ Database::Database(const string &name) {
     fs::create_directories(folderName);
 
     ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
-
+    if (!DatabaseFile) throw std::runtime_error("Error creating database file\n");
     //create meta page
     MetaPageHeader header;
     header.lastPageID = 1;
     header.rootPageID = 1;
     header.lastSequenceNumber = 1;
     MetaPage MetaPage(header);
-    this->UpdateMetaPage(MetaPage);
+    if(!this->UpdateMetaPage(MetaPage)) throw std::runtime_error("Error updating meta page\n") ;
     //create rootpage
     LeafPage RootPage(1);
-    this->WriteBasicPage(RootPage);
+    if (!this->WriteBasicPage(RootPage)) throw std::runtime_error("Error writing first page\n");
 }
 
 const string& Database::getName() const {
@@ -79,9 +80,15 @@ bool Database::WriteBasicPage(BasicPage &pageToWrite) {
 }
 
 bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
-    ofstream databaseFile(this->getPath().string(), ios::binary | ios::app);
+    ofstream databaseFile(this->getPath(), ios::out | ios::binary);
+    if (!databaseFile) {
+        return false; // could not open
+    }
     databaseFile.seekp(0, ios::beg);
-    databaseFile.write(PageToWrite.mData, PageToWrite.PAGE_SIZE); //add error check
+    if (!databaseFile.good()) return false;
+
+    databaseFile.write(PageToWrite.mData, Page::PAGE_SIZE);
+    if (!databaseFile) return false;
     return true;
 }
 
@@ -89,7 +96,7 @@ std::optional<leafNodeCell> Database::Get(string key){
     MetaPage MetaPage = this->ReadPage(0);
     uint32_t rootPageID = MetaPage.Header()->rootPageID;
     BasicPage currentPage = this->ReadPage(rootPageID);
-    while (currentPage.Header()->isLeaf != true){
+    while (currentPage.Header()->isLeaf != true){ //here infinite loop!
         InternalPage Page(currentPage);
         uint32_t pageID = Page.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
