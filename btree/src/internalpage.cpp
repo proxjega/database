@@ -117,3 +117,13 @@ uint32_t InternalPage::FindPointerByKey(const string &key){
     if (it == end) return *Special(); //return special pointer if it the key is bigger than everyone else
     return GetKeyAndPointer(*it).childPointer;
 }
+
+void InternalPage::CoutPage() {
+    this->Header()->CoutHeader();
+    for (int i = 0; i < this->Header()->numberOfCells; i++) {
+        cout << "offset: " << this->Offsets()[i] << ", key: "; 
+        internalNodeCell cell = this->GetKeyAndPointer(this->Offsets()[i]);
+        cout << cell.key << ": " << cell.childPointer << "\n";
+    }
+    cout << "Special: " << this->Special();
+}

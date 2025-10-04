@@ -12,5 +12,6 @@ class LeafPage : public BasicPage {
         void InsertKeyValue(string key, string value);
         leafNodeCell GetKeyValue(uint16_t offset);
         std::optional<leafNodeCell> FindKey(const string &key);
+        void CoutPage();
 };
 

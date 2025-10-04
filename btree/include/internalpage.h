@@ -12,4 +12,6 @@ class InternalPage : public BasicPage {
         uint16_t FindInsertPosition(const string& key);
         void InsertKeyAndPointer(string key, uint32_t pointer);
         internalNodeCell GetKeyAndPointer(uint16_t offset);
+        void CoutPage();
+
 };

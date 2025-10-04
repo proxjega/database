@@ -103,6 +103,7 @@ int main(){
     page1.InsertKeyValue("key1", "val1");
     page1.InsertKeyValue("key3", "val3");
     page1.InsertKeyValue("a", "val2");
+    page1.CoutPage();
     bool check = Database1.WriteBasicPage(page1);
     if (!check) cout << "ERROR\n";
     auto get = Database1.Get("z"); //infinite loop!

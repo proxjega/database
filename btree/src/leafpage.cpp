@@ -130,3 +130,13 @@ uint16_t LeafPage::FindInsertPosition(const std::string& key) {
 
     return static_cast<uint16_t>(it - begin);
 }
+
+void LeafPage::CoutPage() {
+    this->Header()->CoutHeader();
+    for (int i = 0; i < this->Header()->numberOfCells; i++) {
+        cout << "offset: " << this->Offsets()[i] << ", key: "; 
+        leafNodeCell cell = this->GetKeyValue(this->Offsets()[i]);
+        cout << cell.key << ": " << cell.value << "\n";
+    }
+    cout << "Special: " << this->Special();
+}
