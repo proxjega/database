@@ -27,25 +27,26 @@ Database::Database(const string &name) {
     header.lastPageID = 1;
     header.rootPageID = 1;
     header.lastSequenceNumber = 1;
-    MetaPage MetaPage(header);
-    if(!this->UpdateMetaPage(MetaPage)) throw std::runtime_error("Error updating meta page\n") ;
+    MetaPage MetaPage1(header);
+    if(!this->UpdateMetaPage(MetaPage1)) throw std::runtime_error("Error updating meta page\n") ;
+    
     //create rootpage
     LeafPage RootPage(1);
     if (!this->WriteBasicPage(RootPage)) throw std::runtime_error("Error writing first page\n");
 }
 
-const string& Database::getName() const {
+string Database::getName() const {
     return name;
 }
 
-const fs::path& Database::getPath() const {
+fs::path Database::getPath() const {
     return pathToDatabaseFile;
 }
 
 Page Database::ReadPage(uint32_t pageID) {
     Page page;
 
-    ifstream databaseFile(this->getPath(), ios::in | ios::binary);
+    ifstream databaseFile(this->getPath().string(), ios::in | ios::binary);
     if (!databaseFile) {
         throw std::runtime_error("Failed to open database file for reading");
     }
@@ -63,10 +64,31 @@ Page Database::ReadPage(uint32_t pageID) {
     return page;
 }
 
-bool Database::WriteBasicPage(BasicPage &pageToWrite) {
-    ofstream databaseFile(this->getPath(), ios::out | ios::binary);
+MetaPage Database::ReadMetaPage() {
+    MetaPage page;
+
+    ifstream databaseFile(this->getPath().string(), ios::in | ios::binary);
     if (!databaseFile) {
-        return false; // could not open
+        throw std::runtime_error("Failed to open database file for reading");
+    }
+
+    databaseFile.seekg(0, ios::beg);
+    if (!databaseFile.good()) {
+        throw std::runtime_error("Seek failed in ReadPage");
+    }
+
+    databaseFile.read(page.mData, Page::PAGE_SIZE);
+    if (!databaseFile) {
+        throw std::runtime_error("Read failed in ReadPage");
+    }
+
+    return page;
+}
+
+bool Database::WriteBasicPage(BasicPage &pageToWrite) {
+    ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
+    if (!databaseFile) {
+        return false; 
     }
 
     uint32_t pageID = pageToWrite.Header()->pageID;
@@ -80,7 +102,7 @@ bool Database::WriteBasicPage(BasicPage &pageToWrite) {
 }
 
 bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
-    ofstream databaseFile(this->getPath(), ios::out | ios::binary);
+    ofstream databaseFile(this->getPath().string(), ios::out | ios::binary);
     if (!databaseFile) {
         return false; // could not open
     }
@@ -93,10 +115,12 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
 }
 
 std::optional<leafNodeCell> Database::Get(string key){
-    MetaPage MetaPage = this->ReadPage(0);
-    uint32_t rootPageID = MetaPage.Header()->rootPageID;
+    MetaPage MetaPage1;
+    MetaPage1 = this->ReadPage(0);
+    uint32_t rootPageID = MetaPage1.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
     BasicPage currentPage = this->ReadPage(rootPageID);
-    while (currentPage.Header()->isLeaf != true){ //here infinite loop!
+    while (currentPage.Header()->isLeaf != true){ 
         InternalPage Page(currentPage);
         uint32_t pageID = Page.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);

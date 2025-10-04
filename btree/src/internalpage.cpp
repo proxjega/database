@@ -119,11 +119,13 @@ uint32_t InternalPage::FindPointerByKey(const string &key){
 }
 
 void InternalPage::CoutPage() {
+    cout << "---STARTCOUTPAGE---\n";
     this->Header()->CoutHeader();
     for (int i = 0; i < this->Header()->numberOfCells; i++) {
         cout << "offset: " << this->Offsets()[i] << ", key: "; 
         internalNodeCell cell = this->GetKeyAndPointer(this->Offsets()[i]);
         cout << cell.key << ": " << cell.childPointer << "\n";
     }
-    cout << "Special: " << this->Special();
+    cout << "Special: " << *this->Special() << "\n";
+    cout << "---ENDCOUTPAGE---\n";
 }

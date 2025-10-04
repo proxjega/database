@@ -3,6 +3,7 @@
 #include "page.h"
 
 class LeafPage : public BasicPage {
+       friend class Database;
     public:
         using BasicPage::BasicPage;
 

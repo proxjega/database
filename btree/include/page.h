@@ -106,7 +106,6 @@ class BasicPage : public Page{
 
         //operations
 
-        void CoutPage();
 };
 
 /**
@@ -114,9 +113,11 @@ class BasicPage : public Page{
  * 
  */
 class MetaPage : public Page {
-    public:
+       friend class Database;
+public:
         using Page::Page;
         MetaPage(MetaPageHeader header);
         MetaPage(Page page);
+        MetaPage& operator=(Page& page);
         MetaPageHeader* Header();
 };

@@ -20,10 +20,11 @@ public:
     Database(const string &name);
 
     // Accessors
-    const string& getName() const;
-    const fs::path& getPath() const;
+    string getName() const;
+    fs::path getPath() const;
 
     Page ReadPage(uint32_t pageID);
+    MetaPage ReadMetaPage();
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
 

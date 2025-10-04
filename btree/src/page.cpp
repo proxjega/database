@@ -111,18 +111,7 @@ int16_t BasicPage::FreeSpace() {
     return this->Header()->offsetToEndOfFreeSpace - this->Header()->offsetToStartOfFreeSpace;
 }
 
-/**
- * @brief for debug
- * 
- */
-void BasicPage::CoutPage() {
-    for (int i = 0; i < PAGE_SIZE; i++) {
-        cout << static_cast<int>(mData[i]);
-        if (i == 23) {
-            cout << "\nHEADER END\n";
-        }
-    }
-}
+
 
 // ---------------- MetaPage ----------------
 
@@ -151,5 +140,12 @@ MetaPage::MetaPage(Page page) {
  */
 MetaPageHeader* MetaPage::Header() {
     return reinterpret_cast<MetaPageHeader*>(mData);
+}
+
+MetaPage& MetaPage::operator=(Page& page) {
+    if (this!= &page) {
+        std::memcpy(mData, page.getData(), PAGE_SIZE);
+    }
+    return *this;
 }
 
