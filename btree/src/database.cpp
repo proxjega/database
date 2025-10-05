@@ -114,19 +114,19 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
     return true;
 }
 
-std::optional<leafNodeCell> Database::Get(string key){
+std::optional<leafNodeCell> Database::Get(const string& key){
     MetaPage MetaPage1;
     MetaPage1 = this->ReadPage(0);
     uint32_t rootPageID = MetaPage1.Header()->rootPageID;
     if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
     BasicPage currentPage = this->ReadPage(rootPageID);
     while (currentPage.Header()->isLeaf != true){ 
-        InternalPage Page(currentPage);
-        uint32_t pageID = Page.FindPointerByKey(key);
+        InternalPage internal(currentPage);
+        uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
     }
-    LeafPage Page(currentPage);
-    auto cell = Page.FindKey(key);
+    LeafPage leaf(currentPage);
+    auto cell = leaf.FindKey(key);
     if (cell.has_value()) return cell;
     else {
         cout << "Key not found!\n";

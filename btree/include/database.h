@@ -28,6 +28,6 @@ public:
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
-    std::optional<leafNodeCell> Get(string key);
+    std::optional<leafNodeCell> Get(const string& key);
     bool Set(string key, string value);
 };

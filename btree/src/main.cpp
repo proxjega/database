@@ -90,13 +90,11 @@ void TEST(){
     cout <<  cell << "\n";
     cell = Page4.FindPointerByKey("zz");
     cout << cell << "\n";
-}
 
-int main(){
-    //WTEST();
-    Database Database1("db");
+    //test6:
+    Database Database4("db");
     cout << Database1.getPath().string() <<"\n";
-    LeafPage page1 = Database1.ReadPage(1);
+    LeafPage page4 = Database1.ReadPage(1);
    
     page1.InsertKeyValue("z", "val2");
     page1.InsertKeyValue("key4", "val2");
@@ -110,5 +108,10 @@ int main(){
     if (!get.has_value()) cout << "No key\n";
     else
     cout << get.value().key << ":" << get.value().value;
+}
+
+int main(){
+    //WTEST();
+    
 
 }
