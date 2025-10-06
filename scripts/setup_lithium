@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -e
+
+# Script to download Lithium (header-only)
+echo "📦 Downloading Lithium..."
+
+cd server
+
+# Clone if not already present
+if [ ! -d "lithium" ]; then
+  git clone --depth=1 https://github.com/matt-42/lithium.git
+else
+  echo "Lithium already exists. Updating..."
+  cd lithium && git pull && cd ..
+fi
+
+echo "✅ Lithium installed in server/lithium"

@@ -8,6 +8,8 @@ ehthumbs_vista.db
 # Dump file
 *.stackdump
 
+.vscode
+
 # Folder config file
 [Dd]esktop.ini
 
@@ -291,8 +293,7 @@ dist/
 # Flycheck
 flycheck_*.el
 
-# server auth directory
-/server/
+/lithium
 
 # projectiles files
 .projectile
@@ -531,7 +532,6 @@ qrc_*.cpp
 ui_*.h
 *.qmlc
 *.jsc
-Makefile*
 *build-*
 *.qm
 *.prl
@@ -941,7 +941,6 @@ CMakeCache.txt
 CMakeFiles
 CMakeScripts
 Testing
-Makefile
 cmake_install.cmake
 install_manifest.txt
 compile_commands.json
@@ -1043,3 +1042,5 @@ dkms.conf
 *.uf2
 # Raspberry Pi Pico disassembler file
 *.dis
+
+server_app
