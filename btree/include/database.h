@@ -29,5 +29,5 @@ public:
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
     std::optional<leafNodeCell> Get(const string& key);
-    bool Set(string key, string value);
+    bool Set(const string& key, const string& value);
 };

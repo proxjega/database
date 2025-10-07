@@ -96,12 +96,12 @@ void TEST(){
     cout << Database1.getPath().string() <<"\n";
     LeafPage page4 = Database1.ReadPage(1);
    
-    page1.InsertKeyValue("z", "val2");
-    page1.InsertKeyValue("key4", "val2");
-    page1.InsertKeyValue("key2", "val2");
-    page1.InsertKeyValue("key1", "val1");
-    page1.InsertKeyValue("key3", "val3");
-    page1.InsertKeyValue("a", "val2");
+    page4.InsertKeyValue("z", "val2");
+    page4.InsertKeyValue("key4", "val2");
+    page4.InsertKeyValue("key2", "val2");
+    page4.InsertKeyValue("key1", "val1");
+    page4.InsertKeyValue("key3", "val3");
+    page4.InsertKeyValue("a", "val2");
     bool check = Database1.WriteBasicPage(page1);
     if (!check) cout << "ERROR\n";
     auto get = Database1.Get("za"); //infinite loop!
@@ -112,6 +112,22 @@ void TEST(){
 
 int main(){
     //WTEST();
-    
+    LeafPage leaf(1);
+    InternalPage internal(1);
+    leaf.InsertKeyValue("a", "1" );
+    leaf.InsertKeyValue("b", "2" );
+    leaf.InsertKeyValue("c", "3" );
+    leaf.InsertKeyValue("d", "4" );
+    internal.InsertKeyAndPointer("a", 1 );
+    internal.InsertKeyAndPointer("b", 2 );
+    internal.InsertKeyAndPointer("c", 3 );
+    internal.InsertKeyAndPointer("d", 4 );
+    leaf.CoutPage();
+    leaf.RemoveKey("b");
+    leaf.CoutPage();
+    internal.CoutPage();
+    internal.RemoveKey("d");
+    internal.RemoveKey("a");
+    internal.CoutPage();
 
 }

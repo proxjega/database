@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <cstdint>
 
 #include "../include/leafpage.h"
 
@@ -130,6 +131,46 @@ uint16_t LeafPage::FindInsertPosition(const std::string& key) {
 
     return static_cast<uint16_t>(it - begin);
 }
+
+/**
+ * @brief Find index in offsets array of the given key. Based on binary search.
+ * 
+ * @param key 
+ * @return int16_t 
+ */
+int16_t LeafPage::FindKeyIndex(const string& key) {
+    int low = 0;
+    int high = Header()->numberOfCells - 1;
+    while (low <= high) {
+        int mid = low + (high - low) / 2;
+
+        if (GetKeyValue(Offsets()[mid]).key == key)
+            return mid;
+
+        if (GetKeyValue(Offsets()[mid]).key < key)
+            low = mid + 1;
+
+        else
+            high = mid - 1;
+    }
+    return -1;
+}
+
+/**
+ * @brief Lazy deletion of key from the page. Doesn actually removes the key value pair, only offset to them.
+ * 
+ * @param key 
+ */
+void LeafPage::RemoveKey(const string &key){
+    int16_t index = FindKeyIndex(key);
+    if (index == -1) return;
+    for (int i = index; i < Header()->numberOfCells - 1; i++) {
+        Offsets()[i] = Offsets()[i + 1];
+    }
+    Header()->numberOfCells--;
+
+}
+
 
 void LeafPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";

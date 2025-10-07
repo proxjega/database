@@ -134,6 +134,18 @@ std::optional<leafNodeCell> Database::Get(const string& key){
     }
 }
 
-bool Database::Set(string key, string value){
-
+bool Database::Set(const string& key, const string& value){
+    MetaPage MetaPage1;
+    MetaPage1 = this->ReadPage(0);
+    uint32_t rootPageID = MetaPage1.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    BasicPage currentPage = this->ReadPage(rootPageID);
+    while (currentPage.Header()->isLeaf != true){ 
+        InternalPage internal(currentPage);
+        uint32_t pageID = internal.FindPointerByKey(key);
+        currentPage = this->ReadPage(pageID);
+    }
+    LeafPage leaf(currentPage);
+    auto cell = leaf.FindKey(key);
+    if (cell.has_value()) ;//remove and insert??
 }
