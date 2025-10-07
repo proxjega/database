@@ -1,11 +1,13 @@
 #pragma once
 
+#include "leafpage.h"
 #include "page.h"
 #include <string>
 #include <filesystem>
 
 class Page;
 class BasicPage;
+class LeafPage;
 
 using std::string;
 namespace fs = std::filesystem;
@@ -28,6 +30,13 @@ public:
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
+    void SplitLeafPage(LeafPage& LeafToSplit, const string& key, const string& value);
+
+
     std::optional<leafNodeCell> Get(const string& key);
     bool Set(const string& key, const string& value);
+
+    void CoutDatabase();
+    void FoutDatabase();
+
 };

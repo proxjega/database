@@ -12,6 +12,7 @@
 LeafPage::LeafPage(uint32_t ID) {
     PageHeader pageHeader;
     pageHeader.pageID = ID;
+    pageHeader.parentPageID = 0;
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1;
@@ -19,6 +20,7 @@ LeafPage::LeafPage(uint32_t ID) {
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
     pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
+    std::memset(this->Special(), 0, sizeof(uint32_t));
 }
 
 /**
@@ -28,7 +30,7 @@ LeafPage::LeafPage(uint32_t ID) {
  * @param value value to insert
  * @details Deserializes key and value strings. Copies them into end of the page. Inserts an offset to them into offset array (in sorted manner, binary search)
  */
-void LeafPage::InsertKeyValue(string key, string value) {
+bool LeafPage::InsertKeyValue(string key, string value) {
 
     // if ( GetKey(key) == true) return; //check if key exists
     uint16_t keyLength = key.length();
@@ -37,8 +39,7 @@ void LeafPage::InsertKeyValue(string key, string value) {
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
 
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
-        cout << "Not enough space\n";
-        return;
+        return false;
     }
 
     //insert in sorted manner
@@ -66,6 +67,7 @@ void LeafPage::InsertKeyValue(string key, string value) {
     memcpy(pCurrentPosition, value.data(), valueLength);
 
     Header()->numberOfCells++;
+    return true;
 }
 
 /**

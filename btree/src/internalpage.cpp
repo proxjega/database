@@ -11,6 +11,7 @@
 InternalPage::InternalPage(uint32_t ID) {
     PageHeader pageHeader;
     pageHeader.pageID = ID;
+    pageHeader.parentPageID = 0;
     pageHeader.isLeaf = false;
     pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1; // get from logger class
@@ -18,6 +19,7 @@ InternalPage::InternalPage(uint32_t ID) {
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
     pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t); // last child pointer
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
+    std::memset(this->Special(), 0, sizeof(uint32_t));
 }
 
 /**

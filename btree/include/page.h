@@ -22,6 +22,7 @@ struct PageHeader { // 24 bytes
     uint64_t lastSequenceNumber;
     bool isLeaf;
     uint32_t pageID;
+    uint32_t parentPageID;
     uint16_t numberOfCells;
     uint16_t offsetToStartOfFreeSpace;
     uint16_t offsetToEndOfFreeSpace;

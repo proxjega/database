@@ -1,4 +1,5 @@
 #include <iostream>
+#include <string>
 #include "../include/page.h"
 #include "../include/leafpage.h"
 #include "../include/internalpage.h"
@@ -108,10 +109,8 @@ void TEST(){
     if (!get.has_value()) cout << "No key\n";
     else
     cout << get.value().key << ":" << get.value().value;
-}
 
-int main(){
-    //WTEST();
+    //test 7:
     LeafPage leaf(1);
     InternalPage internal(1);
     leaf.InsertKeyValue("a", "1" );
@@ -129,5 +128,16 @@ int main(){
     internal.RemoveKey("d");
     internal.RemoveKey("a");
     internal.CoutPage();
+}
+
+int main(){
+    //WTEST();
+    Database DataBaseSetTest("DataBaseSetTest");
+    for (long int i = 100000000000; i < 100000001000; i++) {
+        DataBaseSetTest.Set(to_string(i), to_string(i));
+    }
+    auto cell = DataBaseSetTest.Get("100000000000");
+    cout << cell->value;
+    // DataBaseSetTest.CoutDatabase();
 
 }

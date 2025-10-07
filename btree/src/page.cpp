@@ -17,6 +17,7 @@ void PageHeader::CoutHeader() {
     cout << "lastSequenceNumber: " << lastSequenceNumber << "\n"
          << "isLeaf: " << isLeaf << "\n"
          << "pageID: " << pageID << "\n"
+         << "parentPageID: " << parentPageID << "\n"
          << "numberOfCells: " << numberOfCells << "\n"
          << "offsetToStartOfFreeSpace: " << offsetToStartOfFreeSpace << "\n"
          << "offsetToEndOfFreeSpace: " << offsetToEndOfFreeSpace << "\n"
