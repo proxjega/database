@@ -178,8 +178,8 @@ void LeafPage::CoutPage() {
     for (int i = 0; i < this->Header()->numberOfCells; i++) {
         cout << "offset: " << this->Offsets()[i] << ", key: "; 
         leafNodeCell cell = this->GetKeyValue(this->Offsets()[i]);
-        cout << cell.key << ": " << cell.value << "\n";
+        cout << cell.key << ":" << cell.value << "\n";
     }
     cout << "Special: " << *this->Special() << "\n";
-    cout << "---ENDCOUTPAGE---\n";
+    cout << "---ENDCOUTPAGE---\n\n";
 }
