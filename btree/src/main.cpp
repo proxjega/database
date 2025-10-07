@@ -133,11 +133,21 @@ void TEST(){
 int main(){
     //WTEST();
     Database DataBaseSetTest("DataBaseSetTest");
-    for (long int i = 100000000000; i < 100000001000; i++) {
+    for (long int i = 100000000000; i < 100000000200; i++) {
         DataBaseSetTest.Set(to_string(i), to_string(i));
     }
-    auto cell = DataBaseSetTest.Get("100000000000");
-    cout << cell->value;
-    // DataBaseSetTest.CoutDatabase();
+    DataBaseSetTest.CoutDatabase();
+    if (DataBaseSetTest.Get("100000000067").has_value()) {
+        cout << DataBaseSetTest.Get("100000000067")->value << "\n";
+    }
+    else {
+        cout << "no key!\n";
+    }
+    if (DataBaseSetTest.Get("100000000068").has_value()) {
+        cout << DataBaseSetTest.Get("100000000068")->value << "\n";
+    }
+    else {
+        cout << "no key!\n";
+    }
 
 }

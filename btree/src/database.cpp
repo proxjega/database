@@ -211,7 +211,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit, const string& key, const str
     LeafPage Child1(Child1ID);
     memcpy(Child1.Special(), &Child2ID, sizeof(uint32_t));
     LeafPage Child2(Child2ID);
-    memcpy(Child1.Special(), LeafToSplit.Special(), sizeof(uint32_t));
+    memcpy(Child2.Special(), LeafToSplit.Special(), sizeof(uint32_t));
     CurrentMetaPage.Header()->lastPageID++;
 
     //split leaf into 2 leaves
@@ -222,7 +222,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit, const string& key, const str
         auto cell = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[i]);
         Child1.InsertKeyValue(cell.key, cell.value);
     }
-    string keyToMoveToParent = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[i]).key;
+    string keyToMoveToParent = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[i-1]).key;
     for (; i < LeafToSplit.Header()->numberOfCells; i++) {
         auto cell = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[i]);
         Child2.InsertKeyValue(cell.key, cell.value);
