@@ -3,6 +3,7 @@
 #include "internalpage.h"
 #include "leafpage.h"
 #include "page.h"
+#include <cstdint>
 #include <string>
 #include <filesystem>
 
@@ -32,7 +33,7 @@ public:
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
     void SplitLeafPage(LeafPage& LeafToSplit, const string& key, const string& value);
-    void SplitInternalPage(InternalPage& InternalToSplit, const string& key, const string& value);
+    void SplitInternalPage(InternalPage& InternalToSplit, const string& key, const uint32_t &pointer1, const uint32_t &pointer2);
 
     std::optional<leafNodeCell> Get(const string& key);
     bool Set(const string& key, const string& value);

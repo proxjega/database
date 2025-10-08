@@ -37,7 +37,6 @@ bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
 
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
-        cout << "Not enough space\n";
         return false;
     }
 

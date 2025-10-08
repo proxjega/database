@@ -159,13 +159,13 @@ int main(){
         }
         DataBaseSetTest.Set(key, key);
     }
-    // for (int i = 66; i <125; i++) {
-    //     string key = "A";
-    //     for (int j = 0; j < 254; j++) {
-    //         key.push_back(static_cast<char>(i));
-    //     }
-    //     DataBaseSetTest.Set(key, key);
-    // }
+    for (int i = 66; i <125; i++) {
+        string key = "A";
+        for (int j = 0; j < 254; j++) {
+            key.push_back(static_cast<char>(i));
+        }
+        DataBaseSetTest.Set(key, key);
+    }
     DataBaseSetTest.CoutDatabase();
 
 
