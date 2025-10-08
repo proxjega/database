@@ -32,7 +32,6 @@ LeafPage::LeafPage(uint32_t ID) {
  */
 bool LeafPage::InsertKeyValue(string key, string value) {
 
-    // if ( GetKey(key) == true) return; //check if key exists
     uint16_t keyLength = key.length();
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);

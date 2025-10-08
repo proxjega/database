@@ -159,7 +159,7 @@ std::optional<leafNodeCell> Database::Get(const string& key){
 
 bool Database::Set(const string& key, const string& value){
     // check strings length
-    if (key.length() > 256 || value.length() > 256) {
+    if (key.length() > 255 || value.length() > 255) {
         cout << "Key or value is too long!\n";
         return false;
     }
@@ -199,7 +199,7 @@ bool Database::Set(const string& key, const string& value){
 void Database::SplitLeafPage(LeafPage& LeafToSplit, const string& key, const string& value) {
     // read meta page (for last page ID)
 #ifdef DEBUG
-    std::cout << "Splitting page: " << LeafToSplit.Header()->pageID << std::endl;
+    std::cout << "Splitting leaf page: " << LeafToSplit.Header()->pageID << std::endl;
 #endif
 
     MetaPage CurrentMetaPage;
@@ -247,8 +247,11 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit, const string& key, const str
     }
     else {
         InternalPage Parent = this->ReadPage(parentID);
-        Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID); //ADD CHECK FOR FREE SPACE!
-        memcpy(Parent.Special(), &Child2ID, sizeof(Child2ID));
+        Child1.Header()->parentPageID = parentID;
+        Child2.Header()->parentPageID = parentID;
+        bool check = false;
+        check = Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID); //ADD CHECK FOR FREE SPACE!
+        Parent.UpdatePointerToTheRightFromKey(keyToMoveToParent, Child2ID);
         this->WriteBasicPage(Parent);
     }
 
@@ -258,8 +261,72 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit, const string& key, const str
     this->UpdateMetaPage(CurrentMetaPage);
 }
 
+// void Database::SplitInternalPage(InternalPage &InternalToSplit, const string& key, const string& value) {
+//     // read meta page (for last page ID)
+// #ifdef DEBUG
+//     std::cout << "Splitting leaf page: " << LeafToSplit.Header()->pageID << std::endl;
+// #endif
+
+//     MetaPage CurrentMetaPage;
+//     CurrentMetaPage = this->ReadPage(0);
+//     uint32_t Child1ID = InternalToSplit.Header()->pageID;
+//     uint32_t Child2ID = CurrentMetaPage.Header()->lastPageID + 1;
+
+//     // create 2 new childs and assign sibling pointers
+//     LeafPage Child1(Child1ID);
+//     memcpy(Child1.Special(), &Child2ID, sizeof(uint32_t));
+//     LeafPage Child2(Child2ID);
+//     memcpy(Child2.Special(), InternalToSplit.Special(), sizeof(uint32_t));
+//     CurrentMetaPage.Header()->lastPageID++;
+
+//     //split leaf into 2 leaves
+//     uint16_t smallerHalf = InternalToSplit.Header()->numberOfCells / 2;
+//     uint16_t BiggerHalf = InternalToSplit.Header()->numberOfCells - smallerHalf;
+//     uint16_t i = 0;
+//     for (i = 0; i < BiggerHalf; i++) {
+//         auto cell = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]);
+//         Child1.InsertKeyValue(cell.key, cell.childPointer);
+//     }
+//     string keyToMoveToParent = InternalToSplit.GetKeyValue(InternalToSplit.Offsets()[i-1]).key;
+//     for (; i < InternalToSplit.Header()->numberOfCells; i++) {
+//         auto cell = InternalToSplit.GetKeyValue(InternalToSplit.Offsets()[i]);
+//         Child2.InsertKeyValue(cell.key, cell.value);
+//     }
+
+//     //insert key value that originally caused the split
+//     if (key > keyToMoveToParent) Child2.InsertKeyValue(key, value);
+//     else Child1.InsertKeyValue(key, value);
+
+//     //add key to parent or create parent
+//     uint32_t parentID = InternalToSplit.Header()->parentPageID;
+//     if (parentID == 0) {
+//         uint32_t newParentID = CurrentMetaPage.Header()->lastPageID + 1;
+//         InternalPage Parent(newParentID);
+//         CurrentMetaPage.Header()->lastPageID++;
+//         Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID);
+//         memcpy(Parent.Special(), &Child2ID, sizeof(Child2ID));
+//         CurrentMetaPage.Header()->rootPageID = newParentID;
+//         if (!this->WriteBasicPage(Parent)) throw std::runtime_error("Error writing parent page!\n");
+//         Child1.Header()->parentPageID = newParentID;
+//         Child2.Header()->parentPageID = newParentID;
+//     }
+//     else {
+//         InternalPage Parent = this->ReadPage(parentID);
+//         bool check = false;
+//         check = Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID); //ADD CHECK FOR FREE SPACE!
+//         memcpy(Parent.Special(), &Child2ID, sizeof(Child2ID));
+//         this->WriteBasicPage(Parent);
+//     }
+
+//     //write pages
+//     this->WriteBasicPage(Child1);
+//     this->WriteBasicPage(Child2);
+//     this->UpdateMetaPage(CurrentMetaPage);
+// }
+
 void Database::CoutDatabase(){
     MetaPage CurrentMetaPage = ReadMetaPage();
+    CurrentMetaPage.Header()->CoutHeader();
     uint32_t pagenum = CurrentMetaPage.Header()->lastPageID;
     cout << "pagenum = " << pagenum << "\n\n";
     for (int i = 1; i <= pagenum; i++) {

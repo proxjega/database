@@ -128,10 +128,8 @@ void TEST(){
     internal.RemoveKey("d");
     internal.RemoveKey("a");
     internal.CoutPage();
-}
 
-int main(){
-    //WTEST();
+    //test8: 
     Database DataBaseSetTest("DataBaseSetTest");
     for (long int i = 100000000000; i < 100000000200; i++) {
         DataBaseSetTest.Set(to_string(i), to_string(i));
@@ -149,5 +147,26 @@ int main(){
     else {
         cout << "no key!\n";
     }
+}
+
+int main(){
+    //WTEST();
+    Database DataBaseSetTest("DataBaseSetTest");
+    for (int i = 65; i <125; i++) {
+        string key = "";
+        for (int j = 0; j < 255; j++) {
+            key.push_back(static_cast<char>(i));
+        }
+        DataBaseSetTest.Set(key, key);
+    }
+    // for (int i = 66; i <125; i++) {
+    //     string key = "A";
+    //     for (int j = 0; j < 254; j++) {
+    //         key.push_back(static_cast<char>(i));
+    //     }
+    //     DataBaseSetTest.Set(key, key);
+    // }
+    DataBaseSetTest.CoutDatabase();
+
 
 }

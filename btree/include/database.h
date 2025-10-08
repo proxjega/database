@@ -1,5 +1,6 @@
 #pragma once
 
+#include "internalpage.h"
 #include "leafpage.h"
 #include "page.h"
 #include <string>
@@ -31,7 +32,7 @@ public:
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
     void SplitLeafPage(LeafPage& LeafToSplit, const string& key, const string& value);
-
+    void SplitInternalPage(InternalPage& InternalToSplit, const string& key, const string& value);
 
     std::optional<leafNodeCell> Get(const string& key);
     bool Set(const string& key, const string& value);

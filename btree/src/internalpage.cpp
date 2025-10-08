@@ -1,5 +1,7 @@
 #include "../include/internalpage.h"
 #include <algorithm>
+#include <cstdint>
+#include <stdexcept>
 
 // ---------------- InternalPage ----------------
 
@@ -29,14 +31,14 @@ InternalPage::InternalPage(uint32_t ID) {
  * @param key 
  * @param pointer 
  */
-void InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
+bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     uint16_t keyLength = key.length();
     uint16_t cellLength = keyLength + sizeof(keyLength) + sizeof(pointer);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
 
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
         cout << "Not enough space\n";
-        return;
+        return false;
     }
 
     //insert in sorted manner
@@ -62,6 +64,7 @@ void InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
 
 
     Header()->numberOfCells++;
+    return true;
 }
 
 /**
@@ -159,6 +162,31 @@ void InternalPage::RemoveKey(const string &key){
 
 }
 
+void InternalPage::UpdatePointerToTheRightFromKey(const string& key, uint32_t pointer){
+    // get the index of given key
+    int16_t keyIndex = FindKeyIndex(key);
+    if (keyIndex == -1) throw std::runtime_error("Cannot UpdatePointerToTheRightFromKey: index of given key is -1!\n");
+
+    // check if the pointer to the right would be in the cell or in special
+    if (keyIndex + 1 < this->Header()->numberOfCells) {
+        //get offset to old cell
+        uint16_t offset = this->Offsets()[keyIndex+1];
+        
+        //get old key length (for memcpy)
+        uint16_t keyLength;
+        auto* pCurrentPosition = mData + offset;
+        memcpy(&keyLength, pCurrentPosition, sizeof(keyLength));
+        
+        // get to the pointer place
+        pCurrentPosition += sizeof(keyLength) + keyLength;
+
+        //rewrite pointer
+        memcpy(pCurrentPosition, &pointer, sizeof(pointer));
+    }
+    else {
+        memcpy(this->Special(), &pointer, sizeof(pointer));
+    }
+}
 
 void InternalPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";
