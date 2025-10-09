@@ -167,6 +167,9 @@ int main(){
         DataBaseSetTest.Set(key, key);
     }
     DataBaseSetTest.CoutDatabase();
+    // LeafPage testpage1(2);
+    // InternalPage testpage(3);
+    // testpage.InsertKeyAndPointer("a", 1);
 
 
 }

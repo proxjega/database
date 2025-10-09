@@ -175,13 +175,13 @@ bool Database::Set(const string& key, const string& value){
     //loop to leaf page
     while (currentPage.Header()->isLeaf != true){ 
         InternalPage internal(currentPage);
+        //debug
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
     }
-
+    
     //Insert key value pair or split and then insert
     LeafPage leaf(currentPage);
-
     if (leaf.WillFit(key, value)) {
         leaf.InsertKeyValue(key, value);
         this->WriteBasicPage(leaf);
@@ -198,10 +198,11 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
 #ifdef DEBUG
     std::cout << "Splitting leaf page: " << LeafToSplit.Header()->pageID << std::endl;
 #endif
-
+    // re-read page before working to get the newest data
+    LeafToSplit = this->ReadPage(LeafToSplit.Header()->pageID);
     uint16_t rightPart = LeafToSplit.Header()->numberOfCells / 2;
     uint16_t leftPart = LeafToSplit.Header()->numberOfCells - rightPart;
-    string keyToMoveToParent = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[leftPart]).key;
+    string keyToMoveToParent = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[leftPart-1]).key;
     
     // check if the parent needs to be splitted
     uint32_t parentID = LeafToSplit.Header()->parentPageID;
@@ -287,10 +288,11 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
 #ifdef DEBUG
     std::cout << "Splitting internal page: " << InternalToSplit.Header()->pageID << std::endl;
 #endif
+    InternalToSplit = this->ReadPage(InternalToSplit.Header()->pageID);
 
-    uint16_t rightPart = InternalToSplit.Header()->numberOfCells / 2;
-    uint16_t leftPart = InternalToSplit.Header()->numberOfCells - rightPart;
-    string keyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[leftPart]).key;
+    uint16_t total = InternalToSplit.Header()->numberOfCells;
+    uint16_t mid = total / 2;
+    string keyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[mid]).key;
     
     // check if the parent needs to be splitted
     uint32_t parentID = InternalToSplit.Header()->parentPageID;
@@ -316,20 +318,16 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     Meta.Header()->lastPageID++;
 
     //split internal into 2 internals
-    uint16_t i = 0;
-    for (i = 0; i < leftPart-1; i++) {
+    for (uint16_t i = 0; i < mid; i++) {
         auto cell = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]);
         Child1.InsertKeyAndPointer(cell.key, cell.childPointer);
     }
-
     //copy pointer of middle key (that will be moved to parent) to child1 special
-    uint32_t pointerOfKeyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]).childPointer;
+    uint32_t pointerOfKeyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[mid]).childPointer;
     memcpy(Child1.Special(), &pointerOfKeyToMoveToParent, sizeof(pointerOfKeyToMoveToParent));
-    i++;
-
 
     //copy cells to second child and assing special pointer (to the most right child)
-    for (; i < InternalToSplit.Header()->numberOfCells; i++) {
+    for (uint16_t i = mid + 1; i < total; i++) {
         auto cell = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]);
         Child2.InsertKeyAndPointer(cell.key, cell.childPointer);
     }
