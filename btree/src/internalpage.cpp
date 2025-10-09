@@ -66,6 +66,16 @@ bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     return true;
 }
 
+bool InternalPage::WillFit(string key, uint32_t pointer){
+    uint16_t keyLength = key.length();
+    uint16_t cellLength = keyLength + sizeof(keyLength) + sizeof(pointer);
+    uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+
+    if (this->FreeSpace() < cellLength + sizeof(offset) ) {
+        return false;
+    }
+    return true;
+}
 /**
  * @brief Get key pointer pair by offset
  * 

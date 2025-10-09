@@ -1,4 +1,3 @@
-#pragma once
 #include <algorithm>
 #include <cstdint>
 
@@ -36,9 +35,16 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
-
+    
+    //check if it fits
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
         return false;
+    }
+
+    // check if key value pair already exists and remove it so it will be rewritten
+    auto cell = this->FindKey(key);
+    if (cell.has_value()) {
+        this->RemoveKey(key);
     }
 
     //insert in sorted manner
@@ -66,6 +72,18 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     memcpy(pCurrentPosition, value.data(), valueLength);
 
     Header()->numberOfCells++;
+    return true;
+}
+
+bool LeafPage::WillFit(string key, string value){
+    uint16_t keyLength = key.length();
+    uint16_t valueLength = value.length();
+    uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
+    uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+
+    if (this->FreeSpace() < cellLength + sizeof(offset) ) {
+        return false;
+    }
     return true;
 }
 

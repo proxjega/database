@@ -32,8 +32,8 @@ public:
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
-    void SplitLeafPage(LeafPage& LeafToSplit, const string& key, const string& value);
-    void SplitInternalPage(InternalPage& InternalToSplit, const string& key, const uint32_t &pointer1, const uint32_t &pointer2);
+    void SplitLeafPage(LeafPage& LeafToSplit);
+    void SplitInternalPage(InternalPage& InternalToSplit);
 
     std::optional<leafNodeCell> Get(const string& key);
     bool Set(const string& key, const string& value);

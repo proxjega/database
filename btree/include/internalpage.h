@@ -15,6 +15,7 @@ class InternalPage : public BasicPage {
         void UpdatePointerToTheRightFromKey(const string& key,uint32_t pointer);
 
         
+        bool WillFit(string key, uint32_t pointer);
         bool InsertKeyAndPointer(string key, uint32_t pointer);
         internalNodeCell GetKeyAndPointer(uint16_t offset);
         void RemoveKey(const string &key);
