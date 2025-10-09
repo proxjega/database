@@ -174,5 +174,9 @@ int main(){
     for (auto key : keys) {
         cout << key << "\n";
     }
-
+    cout << "\n\n\n";
+    vector<string> prefixedKeys = DataBaseSetTest.GetKeys("A");
+    for (auto key : prefixedKeys) {
+        cout << key << "\n";
+    }
 }

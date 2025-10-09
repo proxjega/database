@@ -37,8 +37,11 @@ public:
 
     std::optional<leafNodeCell> Get(const string& key);
     bool Set(const string& key, const string& value);
-
     vector<string> GetKeys();
+    vector<string> GetKeys(string prefix);
+    vector<leafNodeCell> GetFF(string key);
+    vector<leafNodeCell> GetFB(string key);
+
 
     void CoutDatabase();
     void FoutDatabase();

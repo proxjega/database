@@ -4,6 +4,7 @@
 #include <fstream>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 #include "../include/page.h"
 #include "../include/internalpage.h"
 #include "../include/leafpage.h"
@@ -415,6 +416,17 @@ vector<string> Database::GetKeys(){
         leaf = ReadPage(*leaf.Special());
     }
     return keys;
+}
+
+vector<string> Database::GetKeys(string prefix){
+    vector<string> keys = this->GetKeys();
+    vector<string> filteredKeys;
+    uint32_t prefixLenght = prefix.length();
+    for (auto key : keys) {
+        string substr = key.substr(0, prefixLenght);
+        if (substr == prefix) filteredKeys.push_back(key);
+    }
+    return filteredKeys;
 }
 
 void Database::CoutDatabase(){
