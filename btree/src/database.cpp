@@ -125,7 +125,7 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
 
 std::optional<leafNodeCell> Database::Get(const string& key){
     // check keys length
-    if (key.length() > 256) {
+    if (key.length() > 255) {
         cout << "Key is too long!\n";
         return std::nullopt;
     }
@@ -283,7 +283,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
         this->UpdateMetaPage(Meta);
     }
 }
-// eshe odin argument??
+
 void Database::SplitInternalPage(InternalPage& InternalToSplit){
 #ifdef DEBUG
     std::cout << "Splitting internal page: " << InternalToSplit.Header()->pageID << std::endl;
@@ -387,6 +387,34 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
         this->WriteBasicPage(Child2);
         this->UpdateMetaPage(Meta);
     }
+}
+
+vector<string> Database::GetKeys(){
+    MetaPage CurrentMetaPage;
+    CurrentMetaPage = this->ReadPage(0);
+    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to first leaf
+    while (currentPage.Header()->isLeaf != true){ 
+        InternalPage internal(currentPage);
+        uint16_t firstOffset = internal.Offsets()[0];
+        uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
+        currentPage = this->ReadPage(pageID);
+    }
+
+    vector<string> keys;
+    LeafPage leaf(currentPage);
+    while (*leaf.Special()!=0) {
+        for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
+            keys.push_back(leaf.GetKeyValue(leaf.Offsets()[i]).key);
+        }
+        leaf = ReadPage(*leaf.Special());
+    }
+    return keys;
 }
 
 void Database::CoutDatabase(){

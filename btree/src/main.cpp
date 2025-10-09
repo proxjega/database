@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <vector>
 #include "../include/page.h"
 #include "../include/leafpage.h"
 #include "../include/internalpage.h"
@@ -166,10 +167,12 @@ int main(){
         }
         DataBaseSetTest.Set(key, key);
     }
-    DataBaseSetTest.CoutDatabase();
     // LeafPage testpage1(2);
     // InternalPage testpage(3);
     // testpage.InsertKeyAndPointer("a", 1);
-
+    vector<string> keys = DataBaseSetTest.GetKeys();
+    for (auto key : keys) {
+        cout << key << "\n";
+    }
 
 }
