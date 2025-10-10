@@ -474,7 +474,47 @@ vector<leafNodeCell> Database::GetFF(const string &key){
 }
     
 vector<leafNodeCell> Database::GetFB(const string &key){
+    
+    vector<leafNodeCell> keyValuePairs;
 
+    //check if key exists in database
+    if (key.length() > 255 || !this->Get(key).has_value()) {
+        cout << "No such key in database!\n";
+        return keyValuePairs;
+    }
+    
+    MetaPage CurrentMetaPage;
+    CurrentMetaPage = this->ReadPage(0);
+    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to first leaf
+    while (currentPage.Header()->isLeaf != true){ 
+        InternalPage internal(currentPage);
+        uint16_t firstOffset = internal.Offsets()[0];
+        uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
+        currentPage = this->ReadPage(pageID);
+    }
+
+    LeafPage leaf(currentPage);
+    bool stop = false;
+    while (stop != true) {
+        for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
+            auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
+            keyValuePairs.push_back(cell);
+            if (cell.key == key) {
+                stop = true;
+                break;
+            }
+        }
+        leaf = ReadPage(*leaf.Special());
+    }
+
+    vector<leafNodeCell> reversed(keyValuePairs.rbegin(), keyValuePairs.rend());
+    return reversed;
 }
 
 void Database::CoutDatabase(){
