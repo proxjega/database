@@ -148,35 +148,51 @@ void TEST(){
     else {
         cout << "no key!\n";
     }
-}
 
-int main(){
-    //WTEST();
-    Database DataBaseSetTest("DataBaseSetTest");
+    //test8:
+    Database DataBaseSetTest2("DataBaseSetTest2");
+    DataBaseSetTest2.CoutDatabase();
     for (int i = 65; i <125; i++) {
         string key = "";
         for (int j = 0; j < 255; j++) {
             key.push_back(static_cast<char>(i));
         }
-        DataBaseSetTest.Set(key, key);
+        DataBaseSetTest2.Set(key, key);
     }
     for (int i = 66; i <125; i++) {
         string key = "A";
         for (int j = 0; j < 254; j++) {
             key.push_back(static_cast<char>(i));
         }
-        DataBaseSetTest.Set(key, key);
+        DataBaseSetTest2.Set(key, key);
     }
-    // LeafPage testpage1(2);
-    // InternalPage testpage(3);
-    // testpage.InsertKeyAndPointer("a", 1);
-    vector<string> keys = DataBaseSetTest.GetKeys();
+    vector<string> keys = DataBaseSetTest2.GetKeys();
     for (auto key : keys) {
         cout << key << "\n";
     }
     cout << "\n\n\n";
-    vector<leafNodeCell> getFFVector = DataBaseSetTest.GetFB("iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii");
+    vector<leafNodeCell> getFFVector = DataBaseSetTest2.GetFB("iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii");
     for (auto cell : getFFVector) {
         cout << cell.key << ":" << cell.value << "\n";
     }
+}
+
+int main(){
+    //WTEST();
+    Database DataBaseSetTest("DataBaseSetTest");
+    DataBaseSetTest.CoutDatabase();
+    // for (int i = 65; i <125; i++) {
+    //     string key = "";
+    //     for (int j = 0; j < 255; j++) {
+    //         key.push_back(static_cast<char>(i));
+    //     }
+    //     DataBaseSetTest.Set(key, key);
+    // }
+    // for (int i = 66; i <125; i++) {
+    //     string key = "A";
+    //     for (int j = 0; j < 254; j++) {
+    //         key.push_back(static_cast<char>(i));
+    //     }
+    //     DataBaseSetTest.Set(key, key);
+    // }
 }

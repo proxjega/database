@@ -1,6 +1,7 @@
 #include "../include/database.h"
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -22,7 +23,8 @@ Database::Database(const string &name) {
     this->pathToDatabaseFile = folderName / fileName;
 
     fs::create_directories(folderName);
-
+    if(fs::exists(this->pathToDatabaseFile)) return;
+    
     ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
     if (!DatabaseFile) throw std::runtime_error("Error creating database file\n");
     //create meta page
