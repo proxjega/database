@@ -32,15 +32,15 @@ public:
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
 
-    void SplitLeafPage(LeafPage& LeafToSplit);
-    void SplitInternalPage(InternalPage& InternalToSplit);
+    void SplitLeafPage(LeafPage &LeafToSplit);
+    void SplitInternalPage(InternalPage &InternalToSplit);
 
-    std::optional<leafNodeCell> Get(const string& key);
-    bool Set(const string& key, const string& value);
+    std::optional<leafNodeCell> Get(const string &key);
+    bool Set(const string& key, const string &value);
     vector<string> GetKeys();
-    vector<string> GetKeys(string prefix);
-    vector<leafNodeCell> GetFF(string key);
-    vector<leafNodeCell> GetFB(string key);
+    vector<string> GetKeys(const string &prefix);
+    vector<leafNodeCell> GetFF(const string &key);
+    vector<leafNodeCell> GetFB(const string &key);
 
 
     void CoutDatabase();

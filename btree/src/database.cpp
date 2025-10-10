@@ -418,7 +418,7 @@ vector<string> Database::GetKeys(){
     return keys;
 }
 
-vector<string> Database::GetKeys(string prefix){
+vector<string> Database::GetKeys(const string &prefix){
     vector<string> keys = this->GetKeys();
     vector<string> filteredKeys;
     uint32_t prefixLenght = prefix.length();
@@ -427,6 +427,54 @@ vector<string> Database::GetKeys(string prefix){
         if (substr == prefix) filteredKeys.push_back(key);
     }
     return filteredKeys;
+}
+
+vector<leafNodeCell> Database::GetFF(const string &key){
+    
+    vector<leafNodeCell> keyValuePairs;
+
+    //check if key exists in database
+    if (key.length() > 255 || !this->Get(key).has_value()) {
+        cout << "No such key in database!\n";
+        return keyValuePairs;
+    }
+    
+    // get root page id
+    MetaPage CurrentMetaPage;
+    CurrentMetaPage = this->ReadPage(0);
+    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to leaf
+    while (currentPage.Header()->isLeaf != true){ 
+        InternalPage internal(currentPage);
+        uint32_t pageID = internal.FindPointerByKey(key);
+        currentPage = this->ReadPage(pageID);
+    }
+
+    //get keys from leaf page 
+    LeafPage leaf(currentPage);
+    int16_t index = leaf.FindKeyIndex(key);// protection??
+    for (uint16_t i = index; i < leaf.Header()->numberOfCells; i++) {
+        auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
+        keyValuePairs.push_back(cell);
+    }
+
+    // traverse other leaves
+    while (*leaf.Special()!=0) {
+        leaf = ReadPage(*leaf.Special());
+        for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
+            keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
+        }
+    }
+    return keyValuePairs;
+}
+    
+vector<leafNodeCell> Database::GetFB(const string &key){
+
 }
 
 void Database::CoutDatabase(){

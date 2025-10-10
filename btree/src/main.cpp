@@ -175,8 +175,8 @@ int main(){
         cout << key << "\n";
     }
     cout << "\n\n\n";
-    vector<string> prefixedKeys = DataBaseSetTest.GetKeys("A");
-    for (auto key : prefixedKeys) {
-        cout << key << "\n";
+    vector<leafNodeCell> getFFVector = DataBaseSetTest.GetFF("iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii");
+    for (auto cell : getFFVector) {
+        cout << cell.key << ":" << cell.value << "\n";
     }
 }
