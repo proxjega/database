@@ -152,7 +152,10 @@ std::optional<leafNodeCell> Database::Get(const string& key){
     //get key from leaf page (if exists)
     LeafPage leaf(currentPage);
     auto cell = leaf.FindKey(key);
-    if (cell.has_value()) return cell;
+    if (cell.has_value()){
+        cout << cell->value << "\n";
+        return cell;
+    }
     else {
         cout << "Key not found!\n";
         return std::nullopt;
@@ -183,17 +186,26 @@ bool Database::Set(const string& key, const string& value){
         currentPage = this->ReadPage(pageID);
     }
     
-    //Insert key value pair or split and then insert
+    // Try to insert
     LeafPage leaf(currentPage);
     if (leaf.WillFit(key, value)) {
         leaf.InsertKeyValue(key, value);
         this->WriteBasicPage(leaf);
     }
+    // If doesnt fit - optimize and then try
     else {
-        this->SplitLeafPage(leaf);
-        this->Set(key, value);
+        leaf = leaf.Optimize();
+        if (leaf.WillFit(key, value)) {
+            leaf.InsertKeyValue(key, value);
+            this->WriteBasicPage(leaf);
+        }
+        // If still doesnt fit - split
+        else {
+            this->SplitLeafPage(leaf);
+            this->Set(key, value);
+        }
     }
-    
+    cout << "OK\n";
     return true;
 }
 
@@ -612,9 +624,100 @@ vector<leafNodeCell> Database::GetFB100(const string &key){
 }
 
 bool Database::Remove(const string& key) {
+    if (key.length() > 255) {
+        cout << "Key is too long!\n";
+        return false;
+    }
+    
+    // get root page id
+    MetaPage CurrentMetaPage;
+    CurrentMetaPage = this->ReadPage(0);
+    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
 
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to leaf
+    while (currentPage.Header()->isLeaf != true){ 
+        InternalPage internal(currentPage);
+        uint32_t pageID = internal.FindPointerByKey(key);
+        currentPage = this->ReadPage(pageID);
+    }
+
+    //get key from leaf page (if exists)
+    LeafPage leaf(currentPage);
+    auto cell = leaf.FindKey(key);
+    if (!cell.has_value()) return false;
+    else {
+        leaf.RemoveKey(key);
+        this->WriteBasicPage(leaf);
+        cout << "Removed key: " << key << "\n";
+        return true;
+    }
 }
 
+void Database::Optimize(){
+    uintmax_t oldSize;
+    try {
+        oldSize = std::filesystem::file_size(this->pathToDatabaseFile);
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+    }
+    Database OptimizedDb(this->name + "optimized");
+
+    MetaPage CurrentMetaPage;
+    CurrentMetaPage = this->ReadPage(0);
+    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
+    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to first leaf
+    while (currentPage.Header()->isLeaf != true){ 
+        InternalPage internal(currentPage);
+        uint16_t firstOffset = internal.Offsets()[0];
+        uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
+        currentPage = this->ReadPage(pageID);
+    }
+
+    vector<string> keys;
+    LeafPage leaf(currentPage);
+    while (*leaf.Special()!=0) {
+        for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
+            auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
+            OptimizedDb.Set(cell.key, cell.value);
+        }
+        leaf = ReadPage(*leaf.Special());
+    }
+
+    uintmax_t newSize;
+    try {
+        newSize = std::filesystem::file_size(OptimizedDb.pathToDatabaseFile);
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+    }
+
+    try {
+        std::filesystem::rename(this->pathToDatabaseFile, this->name + "Old.db");
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+    }
+
+    try {
+        std::filesystem::rename(OptimizedDb.pathToDatabaseFile, this->pathToDatabaseFile);
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error: " << e.what() << '\n';
+    }
+
+    try {
+        std::filesystem::remove(this->name + "Old.db");
+    } catch (const std::filesystem::filesystem_error& e) {
+        std::cerr << "Error deleting file: " << e.what() << '\n';
+    }
+    cout << "Optimized successfully. Freed " << oldSize - newSize << " bytes.\n";
+}
 
 void Database::CoutDatabase(){
     MetaPage CurrentMetaPage = ReadMetaPage();

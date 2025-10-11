@@ -190,6 +190,16 @@ void LeafPage::RemoveKey(const string &key){
 
 }
 
+LeafPage LeafPage::Optimize(){
+    LeafPage OptimizedLeaf(this->Header()->pageID);
+    for (int i = 0; i < this->Header()->numberOfCells; i++) {
+        auto cell = this->GetKeyValue(this->Offsets()[i]);
+        OptimizedLeaf.InsertKeyValue(cell.key, cell.value);
+    }
+    OptimizedLeaf.Header()->parentPageID = this->Header()->parentPageID;
+    memcpy(OptimizedLeaf.Special(), this->Special(), sizeof(*this->Special()));
+    return OptimizedLeaf;
+}
 
 void LeafPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";

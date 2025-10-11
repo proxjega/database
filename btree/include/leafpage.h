@@ -14,6 +14,7 @@ class LeafPage : public BasicPage {
         uint16_t FindInsertPosition(const string& key);
         int16_t FindKeyIndex(const string& key);
         bool WillFit(string key, string value);
+        LeafPage Optimize();
 
         // Operations
         bool InsertKeyValue(string key, string value);

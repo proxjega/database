@@ -45,6 +45,7 @@ public:
     vector<leafNodeCell> GetFB(const string &key);
     vector<leafNodeCell> GetFB100(const string &key);
     bool Remove(const string& key);
+    void Optimize();
 
     // For Debug
     void CoutDatabase();
