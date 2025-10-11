@@ -41,8 +41,10 @@ public:
     vector<string> GetKeys();
     vector<string> GetKeys(const string &prefix);
     vector<leafNodeCell> GetFF(const string &key);
+    vector<leafNodeCell> GetFF100(const string &key);
     vector<leafNodeCell> GetFB(const string &key);
-    bool Remove(const string& ket);
+    vector<leafNodeCell> GetFB100(const string &key);
+    bool Remove(const string& key);
 
     // For Debug
     void CoutDatabase();

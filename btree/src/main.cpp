@@ -178,6 +178,8 @@ void TEST(){
 int main(){
     //WTEST();
     Database DataBaseSetTest("DataBaseSetTest");
+
+    DataBaseSetTest.Set("a", "a");
     DataBaseSetTest.CoutDatabase();
     // for (int i = 65; i <125; i++) {
     //     string key = "";
