@@ -5,7 +5,6 @@
 #include <fstream>
 #include <optional>
 #include <stdexcept>
-#include <vector>
 #include "../include/page.h"
 #include "../include/internalpage.h"
 #include "../include/leafpage.h"
@@ -24,7 +23,7 @@ Database::Database(const string &name) {
 
     fs::create_directories(folderName);
     if(fs::exists(this->pathToDatabaseFile)) return;
-    
+
     ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
     if (!DatabaseFile) throw std::runtime_error("Error creating database file\n");
     //create meta page

@@ -27,22 +27,24 @@ public:
     string getName() const;
     fs::path getPath() const;
 
+    // Page operations
     Page ReadPage(uint32_t pageID);
     MetaPage ReadMetaPage();
     bool WriteBasicPage(BasicPage &PageToWrite);
     bool UpdateMetaPage(MetaPage &PageToWrite);
-
     void SplitLeafPage(LeafPage &LeafToSplit);
     void SplitInternalPage(InternalPage &InternalToSplit);
 
+    // Main operations
     std::optional<leafNodeCell> Get(const string &key);
     bool Set(const string& key, const string &value);
     vector<string> GetKeys();
     vector<string> GetKeys(const string &prefix);
     vector<leafNodeCell> GetFF(const string &key);
     vector<leafNodeCell> GetFB(const string &key);
+    bool Remove(const string& ket);
 
-
+    // For Debug
     void CoutDatabase();
     void FoutDatabase();
 

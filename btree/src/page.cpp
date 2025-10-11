@@ -100,7 +100,7 @@ uint16_t* BasicPage::Offsets() {
  * @return uint32_t* 
  */
 uint32_t* BasicPage::Special(){
-    return reinterpret_cast<uint32_t*>(mData+Header()->offsetToStartOfSpecialSpace);
+    return reinterpret_cast<uint32_t*>(mData + Header()->offsetToStartOfSpecialSpace);
 }
 
 /**

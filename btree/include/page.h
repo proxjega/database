@@ -104,9 +104,6 @@ class BasicPage : public Page{
 
         //helpers
         int16_t FreeSpace();
-
-        //operations
-
 };
 
 /**
@@ -116,9 +113,12 @@ class BasicPage : public Page{
 class MetaPage : public Page {
        friend class Database;
 public:
+        // Constructors
         using Page::Page;
         MetaPage(MetaPageHeader header);
         MetaPage(Page page);
         MetaPage& operator=(Page& page);
+
+        // Pointer
         MetaPageHeader* Header();
 };

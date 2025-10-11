@@ -1,6 +1,5 @@
 #include <iostream>
 #include <string>
-#include <vector>
 #include "../include/page.h"
 #include "../include/leafpage.h"
 #include "../include/internalpage.h"
@@ -108,8 +107,7 @@ void TEST(){
     if (!check) cout << "ERROR\n";
     auto get = Database1.Get("za"); //infinite loop!
     if (!get.has_value()) cout << "No key\n";
-    else
-    cout << get.value().key << ":" << get.value().value;
+    else cout << get.value().key << ":" << get.value().value;
 
     //test 7:
     LeafPage leaf(1);
