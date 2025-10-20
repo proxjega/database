@@ -1042,5 +1042,8 @@ dkms.conf
 *.uf2
 # Raspberry Pi Pico disassembler file
 *.dis
+/.vscode
+/btree/data
+*.db
 
 server_app
