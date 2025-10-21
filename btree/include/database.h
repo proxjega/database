@@ -3,6 +3,7 @@
 #include "internalpage.h"
 #include "leafpage.h"
 #include "page.h"
+#include "logger.hpp"
 #include <cstdint>
 #include <string>
 #include <filesystem>
@@ -18,6 +19,8 @@ class Database {
 private:
     string name;
     fs::path pathToDatabaseFile;
+
+    WAL wal;
 
 public:
     // Constructor
@@ -46,6 +49,7 @@ public:
     vector<leafNodeCell> GetFB100(const string &key);
     bool Remove(const string& key);
     void Optimize();
+    bool RecoverFromWal();
 
     // For Debug
     void CoutDatabase();
