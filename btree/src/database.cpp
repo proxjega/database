@@ -16,8 +16,7 @@ using std::ifstream;
 using std::memcpy;
 
 // ---------------- Database ----------------
-Database::Database(const string &name) {
-    this->name = name;
+Database::Database(const string &name) : name(name), wal(name) {
     fs::path fileName(name + ".db");
     fs::path folderName = "data";
     this->pathToDatabaseFile = folderName / fileName;
@@ -169,11 +168,15 @@ bool Database::Set(const string& key, const string& value){
         return false;
     }
 
+    // this->wal.LogSet(key, value); nzn ar pries patikrinant duombazes struktura ar po.
+    
     // get root page id
     MetaPage MetaPage1;
     MetaPage1 = this->ReadPage(0);
     uint32_t rootPageID = MetaPage1.Header()->rootPageID;
     if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+
+    this->wal.LogSet(key, value);
 
     //read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
@@ -628,12 +631,16 @@ bool Database::Remove(const string& key) {
         cout << "Key is too long!\n";
         return false;
     }
+
+    // this->wal.LogDelete(key); nzn ar pries patikrinant duombazes struktura ar po.
     
     // get root page id
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
     if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+
+    this->wal.LogDelete(key);
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
@@ -717,6 +724,39 @@ void Database::Optimize(){
         std::cerr << "Error deleting file: " << e.what() << '\n';
     }
     cout << "Optimized successfully. Freed " << oldSize - newSize << " bytes.\n";
+}
+
+bool Database::RecoverFromWal() {
+    auto records = this->wal.ReadAllRecords();
+    if (records.empty()) {
+        std::cout << "RecoverFromWal: No WAL records to apply.\n";
+        return true;
+    }
+
+    try {
+        std::cout << "RecoverFromWal: Applying " << records.size() << " records...\n";
+
+        for (const auto &record : records) {
+            if (record.operation == WalOperation::SET) {
+                if(!this->Set(record.key, record.value)) {
+                    std::cerr << "RecoverFromWal: Failed to SET key: ["
+                                  << record.key << "] with value: ["
+                                  << record.value << "]\n";
+                }
+            } else if (record.operation == WalOperation::DELETE) {
+                if(!this->Remove(record.key)) {
+                    std::cerr << "RecoverFromWal: Failed to DELETE key: ["
+                                  << record.key << "]\n";
+                }
+            }
+        }
+
+        this->wal.Clear();
+        return true;
+    } catch (const std::exception &e) {
+        std::cerr << "Recovery failed: " << e.what() << "\n";
+        return false;
+    }
 }
 
 void Database::CoutDatabase(){

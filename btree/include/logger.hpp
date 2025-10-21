@@ -9,20 +9,20 @@ using std::string;
 using std::vector;
 namespace fs = std::filesystem;
 
-enum class WALOperation : uint8_t {
+enum class WalOperation : uint8_t {
     SET = 1,
     DELETE = 2,
 };
 
 struct WalRecord {
     uint64_t lsn;
-    WALOperation operation;
-    uint16_t keyLength;
-    uint16_t valueLength;           // 0 for DELETE
+    WalOperation operation;
+    string key;
+    string value;           // empty string for DELETE
     uint64_t timestamp;
 
     WalRecord() = default;
-    WalRecord(uint64_t seqNum, WALOperation op, const string &key, const string &value = "");
+    WalRecord(uint64_t seqNum, WalOperation op, const string &key, const string &value = "");
 };
 
 class WAL {
@@ -43,10 +43,9 @@ public:
     bool LogSet(const string &key, const string &value);
     bool LogDelete(const string &key);
 
-    vector<WALRecord> ReadAllRecords();
-    bool Replay(const string &databaseFilePath);
+    vector<WalRecord> ReadAllRecords();
 
-    uint64_t GetCurrentSequenceNumber() const {return currentSequenceNumber; }
+    uint64_t GetCurrentSequenceNumber() const { return currentSequenceNumber; }
 
     bool Clear();
 };
