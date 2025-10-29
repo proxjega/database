@@ -43,7 +43,7 @@ public:
     bool LogSet(const string &key, const string &value);
     bool LogDelete(const string &key);
 
-    vector<WalRecord> ReadAllRecords();
+    vector<WalRecord> ReadAllRecords(const uint64_t fromLSN = 0);
 
     uint64_t GetCurrentSequenceNumber() const { return currentSequenceNumber; }
 

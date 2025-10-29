@@ -90,7 +90,7 @@ bool WAL::LogDelete(const string &key) {
     return !this->walFile.fail();
 }
 
-vector<WalRecord> WAL::ReadAllRecords() {
+vector<WalRecord> WAL::ReadAllRecords(const uint64_t fromLSN) {
     vector<WalRecord> records;
 
     if (!fs::exists(this->pathToWALFile)) {
@@ -116,6 +116,9 @@ vector<WalRecord> WAL::ReadAllRecords() {
 
         WalRecord record;
         record.lsn = std::stoull(lsnStr);
+
+        if (record.lsn <= fromLSN) continue;
+
         record.timestamp = std::stoull(timestampStr);
         record.key = key;
 
