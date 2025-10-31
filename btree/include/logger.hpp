@@ -19,7 +19,6 @@ struct WalRecord {
     WalOperation operation;
     string key;
     string value;           // empty string for DELETE
-    uint64_t timestamp;
 
     WalRecord() = default;
     WalRecord(uint64_t seqNum, WalOperation op, const string &key, const string &value = "");
@@ -34,7 +33,6 @@ private:
 
     bool OpenWAL();
     uint64_t GetNextSequenceNumber();
-    uint64_t GetCurrentTimestamp();
 
 public:
     WAL(const string &databaseName);

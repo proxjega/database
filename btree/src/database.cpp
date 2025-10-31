@@ -33,7 +33,7 @@ Database::Database(const string &name) : name(name), wal(name) {
     header.lastSequenceNumber = 1;
     MetaPage MetaPage1(header);
     if(!this->UpdateMetaPage(MetaPage1)) throw std::runtime_error("Error updating meta page\n") ;
-    
+
     //create rootpage
     LeafPage RootPage(1);
     if (!this->WriteBasicPage(RootPage)) throw std::runtime_error("Error writing first page\n");
@@ -99,7 +99,7 @@ MetaPage Database::ReadMetaPage() {
 bool Database::WriteBasicPage(BasicPage &pageToWrite) {
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
-        return false; 
+        return false;
     }
 
     uint32_t pageID = pageToWrite.Header()->pageID;
@@ -131,7 +131,7 @@ std::optional<leafNodeCell> Database::Get(const string& key){
         cout << "Key is too long!\n";
         return std::nullopt;
     }
-    
+
     // get root page id
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
@@ -142,7 +142,7 @@ std::optional<leafNodeCell> Database::Get(const string& key){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
@@ -169,7 +169,7 @@ bool Database::Set(const string& key, const string& value){
     }
 
     // this->wal.LogSet(key, value); nzn ar pries patikrinant duombazes struktura ar po.
-    
+
     // get root page id
     MetaPage MetaPage1;
     MetaPage1 = this->ReadPage(0);
@@ -180,15 +180,15 @@ bool Database::Set(const string& key, const string& value){
 
     //read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
-    
+
     //loop to leaf page
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         //debug
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
     }
-    
+
     // Try to insert
     LeafPage leaf(currentPage);
     if (leaf.WillFit(key, value)) {
@@ -221,7 +221,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
     uint16_t rightPart = LeafToSplit.Header()->numberOfCells / 2;
     uint16_t leftPart = LeafToSplit.Header()->numberOfCells - rightPart;
     string keyToMoveToParent = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[leftPart-1]).key;
-    
+
     // check if the parent needs to be splitted
     uint32_t parentID = LeafToSplit.Header()->parentPageID;
     if (parentID != 0) {
@@ -233,7 +233,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
             return;
         }
     }
-    
+
     // get new children IDs
     MetaPage Meta;
     Meta = this->ReadPage(0);
@@ -311,7 +311,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     uint16_t total = InternalToSplit.Header()->numberOfCells;
     uint16_t mid = total / 2;
     string keyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[mid]).key;
-    
+
     // check if the parent needs to be splitted
     uint32_t parentID = InternalToSplit.Header()->parentPageID;
     if (parentID != 0) {
@@ -447,7 +447,7 @@ vector<string> Database::GetKeys(const string &prefix){
 }
 
 vector<leafNodeCell> Database::GetFF(const string &key){
-    
+
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
@@ -455,7 +455,7 @@ vector<leafNodeCell> Database::GetFF(const string &key){
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
-    
+
     // get root page id
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
@@ -466,13 +466,13 @@ vector<leafNodeCell> Database::GetFF(const string &key){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
     }
-    
-    //get keys from leaf page 
+
+    //get keys from leaf page
     LeafPage leaf(currentPage);
     int16_t index = leaf.FindKeyIndex(key);// protection??
     for (uint16_t i = index; i < leaf.Header()->numberOfCells; i++) {
@@ -491,7 +491,7 @@ vector<leafNodeCell> Database::GetFF(const string &key){
 }
 
 vector<leafNodeCell> Database::GetFF100(const string &key){
-    
+
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
@@ -499,7 +499,7 @@ vector<leafNodeCell> Database::GetFF100(const string &key){
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
-    
+
     // get root page id
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
@@ -510,13 +510,13 @@ vector<leafNodeCell> Database::GetFF100(const string &key){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
     }
     uint16_t counter = 0;
-    //get keys from leaf page 
+    //get keys from leaf page
     LeafPage leaf(currentPage);
     int16_t index = leaf.FindKeyIndex(key);// protection??
     for (uint16_t i = index; i < leaf.Header()->numberOfCells; i++) {
@@ -537,9 +537,9 @@ vector<leafNodeCell> Database::GetFF100(const string &key){
     }
     return keyValuePairs;
 }
-    
+
 vector<leafNodeCell> Database::GetFB(const string &key){
-    
+
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
@@ -547,7 +547,7 @@ vector<leafNodeCell> Database::GetFB(const string &key){
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
-    
+
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
@@ -557,7 +557,7 @@ vector<leafNodeCell> Database::GetFB(const string &key){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
@@ -583,7 +583,7 @@ vector<leafNodeCell> Database::GetFB(const string &key){
 }
 
 vector<leafNodeCell> Database::GetFB100(const string &key){
-    
+
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
@@ -591,7 +591,7 @@ vector<leafNodeCell> Database::GetFB100(const string &key){
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
-    
+
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
@@ -601,7 +601,7 @@ vector<leafNodeCell> Database::GetFB100(const string &key){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
@@ -633,7 +633,7 @@ bool Database::Remove(const string& key) {
     }
 
     // this->wal.LogDelete(key); nzn ar pries patikrinant duombazes struktura ar po.
-    
+
     // get root page id
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
@@ -646,7 +646,7 @@ bool Database::Remove(const string& key) {
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
@@ -682,7 +682,7 @@ void Database::Optimize(){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (currentPage.Header()->isLeaf != true){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;

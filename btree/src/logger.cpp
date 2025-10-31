@@ -1,5 +1,4 @@
 #include <stdexcept>
-#include <chrono>
 #include <fstream>
 #include "../include/logger.hpp"
 #include "../../btree/include/database.h"
@@ -10,10 +9,7 @@ using std::getline;
 using std::istringstream;
 
 WalRecord::WalRecord(uint64_t seqNum, WalOperation op, const string &key, const string &value)
-    : lsn(seqNum), operation(op), key(key),
-      value(value), timestamp(0) {
-
-};
+    : lsn(seqNum), operation(op), key(key), value(value) {};
 
 WAL::WAL(const string &databaseName) : name(databaseName), currentSequenceNumber(0) {
     fs::path folderName = "data";
@@ -58,19 +54,12 @@ uint64_t WAL::GetNextSequenceNumber() {
     return ++this->currentSequenceNumber;
 }
 
-uint64_t WAL::GetCurrentTimestamp() {
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-}
-
 bool WAL::LogSet(const string &key, const string &value) {
     if (!this->walFile.is_open()) return false;
 
     WalRecord record(GetNextSequenceNumber(), WalOperation::SET, key, value);
-    record.timestamp = this->GetCurrentTimestamp();
 
-    this->walFile << record.lsn << "|SET|" << record.timestamp << "|" << key << "|" << value << "\n";
+    this->walFile << record.lsn << "|SET|" << key << "|" << value << "\n";
 
     this->walFile.flush();
 
@@ -81,9 +70,8 @@ bool WAL::LogDelete(const string &key) {
     if (!this->walFile.is_open()) return false;
 
     WalRecord record(GetNextSequenceNumber(), WalOperation::DELETE, key);
-    record.timestamp = this->GetCurrentTimestamp();
 
-    this->walFile << record.lsn << "|DELETE|" << record.timestamp << "|" << key << "\n";
+    this->walFile << record.lsn << "|DELETE|" << key << "\n";
 
     this->walFile.flush();
 
@@ -118,8 +106,6 @@ vector<WalRecord> WAL::ReadAllRecords(const uint64_t fromLSN) {
         record.lsn = std::stoull(lsnStr);
 
         if (record.lsn <= fromLSN) continue;
-
-        record.timestamp = std::stoull(timestampStr);
         record.key = key;
 
         if (opStr == "SET") {
