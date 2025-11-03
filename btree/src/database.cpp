@@ -727,7 +727,7 @@ void Database::Optimize(){
 }
 
 bool Database::RecoverFromWal() {
-    auto records = this->wal.ReadAllRecords();
+    auto records = this->wal.ReadAll();
     if (records.empty()) {
         std::cout << "RecoverFromWal: No WAL records to apply.\n";
         return true;
@@ -751,7 +751,7 @@ bool Database::RecoverFromWal() {
             }
         }
 
-        this->wal.Clear();
+        this->wal.ClearAll();
         return true;
     } catch (const std::exception &e) {
         std::cerr << "Recovery failed: " << e.what() << "\n";

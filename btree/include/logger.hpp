@@ -9,10 +9,7 @@ using std::string;
 using std::vector;
 namespace fs = std::filesystem;
 
-enum class WalOperation : uint8_t {
-    SET = 1,
-    DELETE = 2,
-};
+enum class WalOperation : uint8_t { SET, DELETE };
 
 struct WalRecord {
     uint64_t lsn;
@@ -27,23 +24,38 @@ struct WalRecord {
 class WAL {
 private:
     string name;
-    fs::path pathToWALFile;
+    fs::path walDirectory;
+    fs::path currentWalPath;
     std::fstream walFile;
     uint64_t currentSequenceNumber;
+    uint64_t currentSegmentNumber;
+    size_t maxSegmentSize;
+    size_t currentSegmentSize;
+
+
+    bool RotateWAL();
+    fs::path GetSegmentPath(uint64_t segmentNum) const;
+    vector<fs::path> GetAllSegments() const;
+    bool ShouldRotate() const;
 
     bool OpenWAL();
     uint64_t GetNextSequenceNumber();
+    WalRecord ParseWalRecord(const string &line);
 
 public:
-    WAL(const string &databaseName);
+    WAL(const string &databaseName, size_t MaxSegmentSizeBytes = 5 * 1024); // Default 5MB
     ~WAL();
 
     bool LogSet(const string &key, const string &value);
     bool LogDelete(const string &key);
 
-    vector<WalRecord> ReadAllRecords(const uint64_t fromLSN = 0);
+    vector<WalRecord> ReadAll();
+    vector<WalRecord> ReadFrom(const uint64_t lsn);
 
     uint64_t GetCurrentSequenceNumber() const { return currentSequenceNumber; }
+    uint64_t GetCurrentSegmentNumber() const { return currentSegmentNumber; }
 
-    bool Clear();
+    bool ClearAll();
+    bool ClearUpTo(uint64_t lsn);
+    bool DeleteOldSegments(uint64_t beforeSegment);
 };
