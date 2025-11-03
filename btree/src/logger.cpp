@@ -269,6 +269,12 @@ vector<WalRecord> WAL::ReadFrom(const uint64_t lsn) {
     return records;
 }
 
+bool WAL::HasPendingRecords() {
+    auto records = this->ReadAll();
+    return !records.empty();
+}
+
+
 bool WAL::ClearAll() {
     if (this->walFile.is_open()) {
         this->walFile.close();
