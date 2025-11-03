@@ -21,8 +21,9 @@ private:
     fs::path pathToDatabaseFile;
 
     WAL wal;
+    bool RecoverFromWal();
 
-public:
+    public:
     // Constructor
     Database(const string &name);
 
@@ -49,7 +50,6 @@ public:
     vector<leafNodeCell> GetFB100(const string &key);
     bool Remove(const string& key);
     void Optimize();
-    bool RecoverFromWal();
 
     // For Debug
     void CoutDatabase();

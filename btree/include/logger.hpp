@@ -43,7 +43,7 @@ private:
     WalRecord ParseWalRecord(const string &line);
 
 public:
-    WAL(const string &databaseName, size_t MaxSegmentSizeBytes = 5 * 1024 * 1024); // Default 5MB
+    WAL(const string &databaseName, size_t MaxSegmentSizeBytes = 5 * 1024); // Default 5MB
     ~WAL();
 
     bool LogSet(const string &key, const string &value);
@@ -51,6 +51,7 @@ public:
 
     vector<WalRecord> ReadAll();
     vector<WalRecord> ReadFrom(const uint64_t lsn);
+    bool HasPendingRecords();
 
     uint64_t GetCurrentSequenceNumber() const { return currentSequenceNumber; }
     uint64_t GetCurrentSegmentNumber() const { return currentSegmentNumber; }

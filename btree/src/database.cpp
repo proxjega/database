@@ -14,6 +14,7 @@ using std::ofstream;
 using std::ios;
 using std::ifstream;
 using std::memcpy;
+using std::cout;
 
 // ---------------- Database ----------------
 Database::Database(const string &name) : name(name), wal(name) {
@@ -22,21 +23,39 @@ Database::Database(const string &name) : name(name), wal(name) {
     this->pathToDatabaseFile = folderName / fileName;
 
     fs::create_directories(folderName);
-    if(fs::exists(this->pathToDatabaseFile)) return;
+    if (!fs::exists(this->pathToDatabaseFile)) {
+        // Create new database
+        ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
+        if (!DatabaseFile)
+            throw std::runtime_error("Error creating database file\n");
 
-    ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
-    if (!DatabaseFile) throw std::runtime_error("Error creating database file\n");
-    //create meta page
-    MetaPageHeader header;
-    header.lastPageID = 1;
-    header.rootPageID = 1;
-    header.lastSequenceNumber = 1;
-    MetaPage MetaPage1(header);
-    if(!this->UpdateMetaPage(MetaPage1)) throw std::runtime_error("Error updating meta page\n") ;
+        // Create meta page
+        MetaPageHeader header;
+        header.lastPageID = 1;
+        header.rootPageID = 1;
+        header.lastSequenceNumber = 1;
+        MetaPage MetaPage1(header);
+        if (!this->UpdateMetaPage(MetaPage1))
+            throw std::runtime_error("Error updating meta page\n");
 
-    //create rootpage
-    LeafPage RootPage(1);
-    if (!this->WriteBasicPage(RootPage)) throw std::runtime_error("Error writing first page\n");
+        // Create root page
+        LeafPage RootPage(1);
+        if (!this->WriteBasicPage(RootPage))
+            throw std::runtime_error("Error writing first page\n");
+
+        cout << "Database created successfully: " << this->pathToDatabaseFile << "\n";
+    } else {
+        // Database file exists — check if WAL recovery is needed
+        if (this->wal.HasPendingRecords()) {
+            cout << "Recovering from WAL...\n";
+            if (!this->RecoverFromWal()) {
+                throw std::runtime_error("WAL recovery failed");
+            }
+            cout << "WAL recovery complete.\n";
+        } else {
+            cout << "No WAL recovery needed.\n";
+        }
+    }
 }
 
 string Database::getName() const {
