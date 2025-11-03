@@ -1,6 +1,4 @@
 #include "common.hpp"
-#include <iostream>
-#include <sstream>
 
 static bool do_request_follow_redirect(const std::string& host, uint16_t port,
                                        const std::string& payload) {
