@@ -1,8 +1,3 @@
-#pragma once
-#include <string>
-#include <vector>
-#include <mutex>
-#include <atomic>
 #include "common.hpp"
 
 struct NodeInfo {

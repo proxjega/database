@@ -1,9 +1,4 @@
 #include "common.hpp"
-#include <unordered_map>
-#include <fstream>
-#include <thread>
-#include <atomic>
-#include <iostream>
 
 static std::unordered_map<std::string,std::string> kv;
 static uint64_t last_seq = 0;
