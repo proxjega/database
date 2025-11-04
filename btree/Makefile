@@ -6,7 +6,7 @@ CXXFLAGS = -Wall -Wextra -O0 -std=c++17 -g -DDEBUG
 TARGET = build/main
 
 # Sources and objects
-SRCS = src/main.cpp src/database.cpp src/page.cpp src/leafpage.cpp src/internalpage.cpp
+SRCS = src/main.cpp src/database.cpp src/page.cpp src/leafpage.cpp src/internalpage.cpp src/logger.cpp
 OBJS = $(SRCS:.cpp=.o)
 
 # Default rule
