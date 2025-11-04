@@ -9,8 +9,8 @@ using std::ifstream;
 using std::getline;
 using std::istringstream;
 
-WalRecord::WalRecord(uint64_t seqNum, WalOperation op, const string &key, const string &value)
-    : lsn(seqNum), operation(op), key(key), value(value) {};
+WalRecord::WalRecord(uint64_t seqNum, WalOperation operation, const string &key, const string &value)
+    : lsn(seqNum), operation(operation), key(key), value(value) {};
 
 WAL::WAL(const string &name, size_t MaxSegmentSizeBytes)
     : name(name), currentSequenceNumber(0), currentSegmentNumber(0),
@@ -57,12 +57,6 @@ WAL::WAL(const string &name, size_t MaxSegmentSizeBytes)
     }
 }
 
-WAL::~WAL() {
-    if (this->walFile.is_open()) {
-        this->walFile.close();
-    }
-}
-
 fs::path WAL::GetSegmentPath(uint64_t segmentNum) const {
     return this->walDirectory / (this->name + "_" + std::to_string(segmentNum) + ".log");
 }
@@ -80,9 +74,9 @@ vector<fs::path> WAL::GetAllSegments() const {
         }
     }
 
-    std::sort(segments.begin(), segments.end(), [](const fs::path &a, const fs::path &b) {
-        string filenameA = a.filename().string();
-        string filenameB = b.filename().string();
+    std::sort(segments.begin(), segments.end(), [](const fs::path &pathA, const fs::path &pathB) {
+        string filenameA = pathA.filename().string();
+        string filenameB = pathB.filename().string();
 
         size_t underscoreA = filenameA.find('_');
         size_t dotA = filenameA.find('.');
@@ -144,7 +138,10 @@ WalRecord WAL::ParseWalRecord(const string &line) {
     }
 
     istringstream iss(line);
-    string lsnStr, opStr, key, value;
+    string lsnStr;
+    string opStr;
+    string key;
+    string value;
 
     if (!getline(iss, lsnStr, '|')) {
         record.lsn = 0;
@@ -180,7 +177,9 @@ WalRecord WAL::ParseWalRecord(const string &line) {
 }
 
 bool WAL::LogSet(const string &key, const string &value) {
-    if (!this->walFile.is_open()) return false;
+    if (!this->walFile.is_open()) {
+        return false;
+    }
 
     if (this->ShouldRotate()) {
         if (!this->RotateWAL()) {
@@ -202,7 +201,9 @@ bool WAL::LogSet(const string &key, const string &value) {
 }
 
 bool WAL::LogDelete(const string &key) {
-    if (!this->walFile.is_open()) return false;
+    if (!this->walFile.is_open()) {
+        return false;
+    }
 
     if (this->ShouldRotate()) {
         if (!this->RotateWAL()) {
@@ -228,15 +229,21 @@ vector<WalRecord> WAL::ReadAll() {
     auto segments = this->GetAllSegments();
 
     for (const auto &segmentPath : segments) {
-        if (!fs::exists(segmentPath)) continue;
+        if (!fs::exists(segmentPath)) {
+            continue;
+        }
 
         ifstream logFile(segmentPath.string(), ios::in);
-        if (!logFile) continue;
+        if (!logFile) {
+            continue;
+        }
 
         string line;
         while(getline(logFile, line)) {
-            auto record = this->ParseWalRecord(line);
-            if (record.lsn != 0) records.push_back(record);
+            auto record = ParseWalRecord(line);
+            if (record.lsn != 0) {
+                records.push_back(record);
+            }
         }
 
         logFile.close();
@@ -250,14 +257,18 @@ vector<WalRecord> WAL::ReadFrom(const uint64_t lsn) {
     auto segments = this->GetAllSegments();
 
     for (const auto &segmentPath : segments) {
-        if (!fs::exists(segmentPath)) continue;
+        if (!fs::exists(segmentPath)) {
+            continue;
+        }
 
         ifstream logFile(segmentPath.string(), ios::in);
-        if (!logFile) continue;
+        if (!logFile) {
+            continue;
+        }
 
         string line;
         while(getline(logFile, line)) {
-            auto record = this->ParseWalRecord(line);
+            auto record = ParseWalRecord(line);
             if (record.lsn != 0 && record.lsn > lsn) {
                 records.push_back(record);
             }
@@ -291,11 +302,7 @@ bool WAL::ClearAll() {
         this->currentSegmentSize = 0;
         this->currentWalPath = this->GetSegmentPath(currentSegmentNumber);
 
-        if (!this->OpenWAL()) {
-            return false;
-        }
-
-        return true;
+        return this->OpenWAL();
     } catch (const std::exception &e) {
         return false;
     }
@@ -306,14 +313,18 @@ bool WAL::ClearUpTo(uint64_t lsn) {
     vector<WalRecord> recordsToKeep;
 
     for (const auto &segmentPath : segments) {
-        if (!fs::exists(segmentPath)) continue;
+        if (!fs::exists(segmentPath)) {
+            continue;
+        }
 
         ifstream logFile(segmentPath.string(), ios::in);
-        if (!logFile) continue;
+        if (!logFile) {
+            continue;
+        }
 
         string line;
         while(getline(logFile, line)) {
-            auto record = this->ParseWalRecord(line);
+            auto record = ParseWalRecord(line);
             if (record.lsn != 0 && record.lsn > lsn) {
                 recordsToKeep.push_back(record);
             }
