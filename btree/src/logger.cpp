@@ -1,6 +1,7 @@
 #include <stdexcept>
 #include <fstream>
 #include <algorithm>
+#include <utility>
 #include "../include/logger.hpp"
 #include "../../btree/include/database.h"
 
@@ -9,8 +10,8 @@ using std::ifstream;
 using std::getline;
 using std::istringstream;
 
-WalRecord::WalRecord(uint64_t seqNum, WalOperation operation, const string &key, const string &value)
-    : lsn(seqNum), operation(operation), key(key), value(value) {};
+WalRecord::WalRecord(uint64_t seqNum, WalOperation operation, string key, string value)
+    : lsn(seqNum), operation(operation), key(std::move(key)), value(std::move(value)) {};
 
 WAL::WAL(const string &name, size_t MaxSegmentSizeBytes)
     : name(name), currentSequenceNumber(0), currentSegmentNumber(0),

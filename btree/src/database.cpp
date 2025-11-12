@@ -3,7 +3,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include "../include/page.h"
@@ -126,7 +125,9 @@ bool Database::WriteBasicPage(BasicPage &pageToWrite) const {
 
     uint32_t pageID = pageToWrite.Header()->pageID;
     databaseFile.seekp(pageID * Page::PAGE_SIZE, ios::beg);
-    if (!databaseFile.good()) return false;
+    if (!databaseFile.good()) {
+        return false;
+    }
 
     databaseFile.write(pageToWrite.mData, Page::PAGE_SIZE);
     return !!databaseFile;
@@ -138,7 +139,9 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
         return false; // could not open
     }
     databaseFile.seekp(0, ios::beg);
-    if (!databaseFile.good()) return false;
+    if (!databaseFile.good()) {
+        return false;
+    }
 
     databaseFile.write(PageToWrite.mData, Page::PAGE_SIZE);
     return !!databaseFile;
@@ -146,7 +149,7 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
 
 std::optional<leafNodeCell> Database::Get(const string& key) const {
     // check keys length
-    if (key.length() > 255) {
+    if (key.length() > MAX_KEY_LENGTH) {
         cout << "Key is too long!\n";
         return std::nullopt;
     }
@@ -155,7 +158,7 @@ std::optional<leafNodeCell> Database::Get(const string& key) const {
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) { 
+    if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
 
@@ -183,7 +186,7 @@ std::optional<leafNodeCell> Database::Get(const string& key) const {
 
 bool Database::Set(const string& key, const string& value){
     // check strings length
-    if (key.length() > 255 || value.length() > 255) {
+    if (key.length() > MAX_KEY_LENGTH || value.length() > MAX_VALUE_LENGTH) {
         cout << "Key or value is too long!\n";
         return false;
     }
@@ -477,7 +480,7 @@ vector<leafNodeCell> Database::GetFF(const string &key) const {
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
-    if (key.length() > 255 || !this->Get(key).has_value()) {
+    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
@@ -523,7 +526,7 @@ vector<leafNodeCell> Database::GetFF100(const string &key) const {
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
-    if (key.length() > 255 || !this->Get(key).has_value()) {
+    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
@@ -577,7 +580,7 @@ vector<leafNodeCell> Database::GetFB(const string &key) const {
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
-    if (key.length() > 255 || !this->Get(key).has_value()) {
+    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
@@ -623,7 +626,7 @@ vector<leafNodeCell> Database::GetFB100(const string &key) const {
     vector<leafNodeCell> keyValuePairs;
 
     //check if key exists in database
-    if (key.length() > 255 || !this->Get(key).has_value()) {
+    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
         cout << "No such key in database!\n";
         return keyValuePairs;
     }
@@ -665,7 +668,7 @@ vector<leafNodeCell> Database::GetFB100(const string &key) const {
 }
 
 bool Database::Remove(const string& key) {
-    if (key.length() > 255) {
+    if (key.length() > MAX_KEY_LENGTH) {
         cout << "Key is too long!\n";
         return false;
     }

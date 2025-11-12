@@ -13,7 +13,7 @@ using std::memcpy;
 
 // ---------------- PageHeaders ----------------
 
-void PageHeader::CoutHeader() {
+void PageHeader::CoutHeader()  {
     cout << "lastSequenceNumber: " << lastSequenceNumber << "\n"
          << "isLeaf: " << isLeaf << "\n"
          << "pageID: " << pageID << "\n"

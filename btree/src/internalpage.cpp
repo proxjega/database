@@ -8,16 +8,16 @@
 /**
  * @brief Construct a new InternalPage object with given ID
  *
- * @param ID
+ * @param pageID
  */
-InternalPage::InternalPage(uint32_t ID) {
-    PageHeader pageHeader;
-    pageHeader.pageID = ID;
+InternalPage::InternalPage(uint32_t pageID) {
+    PageHeader pageHeader{};
+    pageHeader.pageID = pageID;
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = false;
     pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1; // get from logger class
-    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-sizeof(uint32_t);
+    pageHeader.offsetToEndOfFreeSpace = InternalPage::PAGE_SIZE-sizeof(uint32_t);
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
     pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t); // last child pointer
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
@@ -56,7 +56,7 @@ bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
     pCurrentPosition += sizeof(keyLength);
 
-    memcpy(pCurrentPosition, key.data(), keyLength);
+    strcpy(pCurrentPosition, key.data());
     pCurrentPosition += keyLength;
 
     memcpy(pCurrentPosition, &pointer, sizeof(pointer));
@@ -102,14 +102,14 @@ internalNodeCell InternalPage::GetKeyAndPointer(uint16_t offset){
  * @return uint16_t offset (in bytes)
  */
 uint16_t InternalPage::FindInsertPosition(const std::string& key) {
-    auto begin = Offsets();
-    auto end = Offsets() + Header()->numberOfCells;
+    auto *begin = Offsets();
+    auto *end = Offsets() + Header()->numberOfCells;
 
-    auto it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
-        return GetKeyAndPointer(offset).key < k;
+    auto *iterator = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& key) {
+        return GetKeyAndPointer(offset).key < key;
     });
 
-    return static_cast<uint16_t>(it - begin);
+    return static_cast<uint16_t>(iterator - begin);
 }
 
 /**
@@ -119,14 +119,16 @@ uint16_t InternalPage::FindInsertPosition(const std::string& key) {
  * @return uint32_t PageID with that key
  */
 uint32_t InternalPage::FindPointerByKey(const string &key){
-    auto begin = Offsets();
-    auto end = Offsets() + Header()->numberOfCells;
+    auto *begin = Offsets();
+    auto *end = Offsets() + Header()->numberOfCells;
 
-    auto it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
-        return GetKeyAndPointer(offset).key < k;
+    auto *iterator = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& key) {
+        return GetKeyAndPointer(offset).key < key;
     });
-    if (it == end) return *Special(); //return special pointer if it the key is bigger than everyone else
-    return GetKeyAndPointer(*it).childPointer;
+    if (iterator == end) {
+        return *Special(); //return special pointer if it the key is bigger than everyone else
+    }
+    return GetKeyAndPointer(*iterator).childPointer;
 }
 
 
@@ -142,26 +144,29 @@ int16_t InternalPage::FindKeyIndex(const string& key) {
     while (low <= high) {
         int mid = low + ((high - low) / 2);
 
-        if (GetKeyAndPointer(Offsets()[mid]).key == key)
+        if (GetKeyAndPointer(Offsets()[mid]).key == key) {
             return mid;
+        }
 
-        if (GetKeyAndPointer(Offsets()[mid]).key < key)
+        if (GetKeyAndPointer(Offsets()[mid]).key < key) {
             low = mid + 1;
-
-        else
+        } else {
             high = mid - 1;
+        }
     }
     return -1;
 }
 
 /**
- * @brief Lazy deletion of key from the page. Doesn actually removes the key value pair, only offset to them.
+ * @brief Lazy deletion of key from the page. Doesn't actually removes the key value pair, only offset to them.
  *
  * @param key
  */
 void InternalPage::RemoveKey(const string &key){
     int16_t index = FindKeyIndex(key);
-    if (index == -1) return;
+    if (index == -1) {
+        return;
+    }
     for (int i = index; i < Header()->numberOfCells - 1; i++) {
         Offsets()[i] = Offsets()[i + 1];
     }
@@ -172,7 +177,9 @@ void InternalPage::RemoveKey(const string &key){
 void InternalPage::UpdatePointerToTheRightFromKey(const string& key, uint32_t pointer){
     // get the index of given key
     int16_t keyIndex = FindKeyIndex(key);
-    if (keyIndex == -1) throw std::runtime_error("Cannot UpdatePointerToTheRightFromKey: index of given key is -1!\n");
+    if (keyIndex == -1) {
+        throw std::runtime_error("Cannot UpdatePointerToTheRightFromKey: index of given key is -1!\n");
+    }
 
     // check if the pointer to the right would be in the cell or in special
     if (keyIndex + 1 < this->Header()->numberOfCells) {
@@ -180,7 +187,7 @@ void InternalPage::UpdatePointerToTheRightFromKey(const string& key, uint32_t po
         uint16_t offset = this->Offsets()[keyIndex+1];
 
         //get old key length (for memcpy)
-        uint16_t keyLength;
+        uint16_t keyLength = 0;
         auto* pCurrentPosition = mData + offset;
         memcpy(&keyLength, pCurrentPosition, sizeof(keyLength));
 

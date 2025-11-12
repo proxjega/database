@@ -8,7 +8,7 @@ class LeafPage : public BasicPage {
 
         // Constructors
         using BasicPage::BasicPage;
-        LeafPage(uint32_t pageID);
+        explicit LeafPage(uint32_t pageID);
 
         // Helpers
         uint16_t FindInsertPosition(const string& key);
