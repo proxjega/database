@@ -6,6 +6,7 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <utility>
 #include <vector>
 
 class Database;
@@ -16,7 +17,7 @@ using std::vector;
 
 /**
  * @brief Struct for header of basic page.
- * 
+ *
  */
 struct PageHeader { // 24 bytes
     uint64_t lastSequenceNumber;
@@ -32,7 +33,7 @@ struct PageHeader { // 24 bytes
 
 /**
  * @brief Struct for header of meta page
- * 
+ *
  */
 struct MetaPageHeader {
     uint32_t rootPageID;
@@ -43,33 +44,27 @@ struct MetaPageHeader {
 
 /**
  * @brief Struct of internal page's node (key:childpointer pair)
- * 
+ *
  */
 struct internalNodeCell {
     string key;
     uint32_t childPointer;
-    internalNodeCell(string key, uint32_t pointer) {
-        this->key = key;
-        this->childPointer = pointer;
-    }
+    internalNodeCell(string key, uint32_t pointer) : key(std::move(key)), childPointer(pointer) {}
 };
 
 /**
  * @brief struct for leaf page's node (key:value pair)
- * 
+ *
  */
 struct leafNodeCell {
     string key;
     string value;
-    leafNodeCell(string key, string value) {
-        this->key = key;
-        this->value = value;
-    }
+    leafNodeCell(string key, string value) : key(std::move(key)), value(std::move(value)) {}
 };
 
 /**
  * @brief Base Page class. Has data array and few basic set get methods
- * 
+ *
  */
 class Page {
     friend class Database;
@@ -78,7 +73,7 @@ class Page {
     protected:
         char mData[PAGE_SIZE];
     public:
-        Page();    
+        Page();
         Page(const Page &page);
         char* getData();
         void setData();
@@ -86,7 +81,7 @@ class Page {
 
 /**
  * @brief BasicPage class for all the pages in database excluding first one (metapage). Is base class for InternalPage and LeafPage.
- * 
+ *
  */
 class BasicPage : public Page{
     friend class Database;
@@ -108,7 +103,7 @@ class BasicPage : public Page{
 
 /**
  * @brief MetaPage class for first page in database. Metapage stores some info about database.
- * 
+ *
  */
 class MetaPage : public Page {
        friend class Database;

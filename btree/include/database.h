@@ -25,7 +25,7 @@ private:
 
     public:
     // Constructor
-    Database(const string &name);
+    explicit Database(const string &name);
 
     // Accessors
     string getName() const;

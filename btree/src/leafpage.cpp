@@ -5,12 +5,12 @@
 
 /**
  * @brief Basic constructor. Constructs new Empty LeafPage with given ID
- * 
- * @param ID 
+ *
+ * @param pageID
  */
-LeafPage::LeafPage(uint32_t ID) {
-    PageHeader pageHeader;
-    pageHeader.pageID = ID;
+LeafPage::LeafPage(uint32_t pageID) {
+    PageHeader pageHeader{};
+    pageHeader.pageID = pageID;
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
@@ -24,7 +24,7 @@ LeafPage::LeafPage(uint32_t ID) {
 
 /**
  * @brief Insert key:value pair into LeafPage
- * 
+ *
  * @param key key to insert
  * @param value value to insert
  * @details Deserializes key and value strings. Copies them into end of the page. Inserts an offset to them into offset array (in sorted manner, binary search)
@@ -35,7 +35,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
-    
+
     //check if it fits
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
         return false;
@@ -49,7 +49,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
 
     //insert in sorted manner
     uint16_t positionToInsert = FindInsertPosition(key);
-    
+
     for (int i = Header()->numberOfCells; i > positionToInsert; i--) {
         Offsets()[i] = Offsets()[i-1];
     }
@@ -75,31 +75,29 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     return true;
 }
 
-bool LeafPage::WillFit(string key, string value){
+bool LeafPage::WillFit(const string &key, const string &value){
     uint16_t keyLength = key.length();
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
 
-    if (this->FreeSpace() < cellLength + sizeof(offset) ) {
-        return false;
-    }
-    return true;
+    return this->FreeSpace() >= cellLength + sizeof(offset);
 }
 
 /**
  * @brief Gets key value pair by offset.
- * 
+ *
  * @param offset offset to keyvalue pair
- * @return leafNodeCell 
+ * @return leafNodeCell
  */
 leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
-    uint16_t keyLength, valueLength;
+    uint16_t keyLength = 0;
+    uint16_t valueLength = 0;
     char* pCurrentPosition = mData + offset;
-   
+
     std::memcpy(&keyLength, pCurrentPosition, sizeof(keyLength));
     pCurrentPosition += sizeof(keyLength);
-    
+
     string key(pCurrentPosition, keyLength);
     pCurrentPosition += keyLength;
 
@@ -107,38 +105,39 @@ leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
     pCurrentPosition += sizeof(valueLength);
 
     string value(pCurrentPosition, valueLength);
-    return leafNodeCell(key, value);
+    return {key, value};
 }
 
 /**
  * @brief Searches for the key in the page and returns key and value if found. Else returns nothing
- * 
- * @param key 
- * @return std::optional<leafNodeCell> 
+ *
+ * @param key
+ * @return std::optional<leafNodeCell>
  */
 std::optional<leafNodeCell> LeafPage::FindKey(const string &key){
     int low = 0;
     int high = Header()->numberOfCells - 1;
     while (low <= high) {
-        int mid = low + (high - low) / 2;
+        int mid = low + ((high - low) / 2);
 
-        if (GetKeyValue(Offsets()[mid]).key == key)
+        if (GetKeyValue(Offsets()[mid]).key == key) {
             return GetKeyValue(Offsets()[mid]);
+        }
 
-        if (GetKeyValue(Offsets()[mid]).key < key)
+        if (GetKeyValue(Offsets()[mid]).key < key) {
             low = mid + 1;
-
-        else
+        } else {
             high = mid - 1;
+        }
     }
     return std::nullopt;
 }
 
 /**
  * @brief Searches for the position to insert offset into offset array in O(log(n))
- * 
- * @param key 
- * @return uint16_t 
+ *
+ * @param key
+ * @return uint16_t
  */
 uint16_t LeafPage::FindInsertPosition(const std::string& key) {
     auto begin = Offsets();
@@ -153,32 +152,33 @@ uint16_t LeafPage::FindInsertPosition(const std::string& key) {
 
 /**
  * @brief Find index in offsets array of the given key. Based on binary search.
- * 
- * @param key 
- * @return int16_t 
+ *
+ * @param key
+ * @return int16_t
  */
 int16_t LeafPage::FindKeyIndex(const string& key) {
     int low = 0;
     int high = Header()->numberOfCells - 1;
     while (low <= high) {
-        int mid = low + (high - low) / 2;
+        int mid = low + ((high - low) / 2);
 
-        if (GetKeyValue(Offsets()[mid]).key == key)
+        if (GetKeyValue(Offsets()[mid]).key == key) {
             return mid;
+        }
 
-        if (GetKeyValue(Offsets()[mid]).key < key)
+        if (GetKeyValue(Offsets()[mid]).key < key) {
             low = mid + 1;
-
-        else
+        } else {
             high = mid - 1;
+        }
     }
     return -1;
 }
 
 /**
  * @brief Lazy deletion of key from the page. Doesn actually removes the key value pair, only offset to them.
- * 
- * @param key 
+ *
+ * @param key
  */
 void LeafPage::RemoveKey(const string &key){
     int16_t index = FindKeyIndex(key);
@@ -205,7 +205,7 @@ void LeafPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";
     this->Header()->CoutHeader();
     for (int i = 0; i < this->Header()->numberOfCells; i++) {
-        cout << "offset: " << this->Offsets()[i] << ", key: "; 
+        cout << "offset: " << this->Offsets()[i] << ", key: ";
         leafNodeCell cell = this->GetKeyValue(this->Offsets()[i]);
         cout << cell.key << ":" << cell.value << "\n";
     }
