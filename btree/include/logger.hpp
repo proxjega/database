@@ -18,7 +18,7 @@ struct WalRecord {
     string value;           // empty string for DELETE
 
     WalRecord() = default;
-    WalRecord(uint64_t seqNum, WalOperation operation, const string &key, const string &value = "");
+    WalRecord(uint64_t seqNum, WalOperation operation, string key, string value = "");
 };
 
 class WAL {
@@ -34,7 +34,7 @@ private:
 
 
     bool RotateWAL();
-    fs::path GetSegmentPath(uint64_t segmentNum) const;
+    fs::path GetSegmentPath(const uint64_t &segmentNum) const;
     vector<fs::path> GetAllSegments() const;
     bool ShouldRotate() const;
 
@@ -45,19 +45,19 @@ private:
 public:
     static constexpr size_t DEFAULT_SEGMENT_SIZE = 5UL * 1024UL * 1024UL;
 
-    explicit WAL(const string &databaseName, size_t MaxSegmentSizeBytes = DEFAULT_SEGMENT_SIZE); // Default 5MB
+    explicit WAL(const string &databaseName, size_t MaxSegmentSizeBytes = DEFAULT_SEGMENT_SIZE); // Default 16MB. Same as Postgres
 
     bool LogSet(const string &key, const string &value);
     bool LogDelete(const string &key);
 
     vector<WalRecord> ReadAll();
-    vector<WalRecord> ReadFrom(uint64_t lsn);
+    vector<WalRecord> ReadFrom(const uint64_t &lsn);
     bool HasPendingRecords();
 
     uint64_t GetCurrentSequenceNumber() const { return currentSequenceNumber; }
     uint64_t GetCurrentSegmentNumber() const { return currentSegmentNumber; }
 
     bool ClearAll();
-    bool ClearUpTo(uint64_t lsn);
-    bool DeleteOldSegments(uint64_t beforeSegment);
+    bool ClearUpTo(const uint64_t &lsn);
+    bool DeleteOldSegments(const uint64_t &beforeSegment);
 };
