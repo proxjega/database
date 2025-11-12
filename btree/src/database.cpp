@@ -26,22 +26,25 @@ Database::Database(const string &name) : name(name), wal(name) {
     if (!fs::exists(this->pathToDatabaseFile)) {
         // Create new database
         ofstream DatabaseFile(this->pathToDatabaseFile.string(), ios::binary);
-        if (!DatabaseFile)
+        if (!DatabaseFile) {
             throw std::runtime_error("Error creating database file\n");
+        }
 
         // Create meta page
-        MetaPageHeader header;
+        MetaPageHeader header{};
         header.lastPageID = 1;
         header.rootPageID = 1;
         header.lastSequenceNumber = 1;
         MetaPage MetaPage1(header);
-        if (!this->UpdateMetaPage(MetaPage1))
+        if (!this->UpdateMetaPage(MetaPage1)) {
             throw std::runtime_error("Error updating meta page\n");
+        }
 
         // Create root page
         LeafPage RootPage(1);
-        if (!this->WriteBasicPage(RootPage))
+        if (!this->WriteBasicPage(RootPage)) {
             throw std::runtime_error("Error writing first page\n");
+        }
 
         cout << "Database created successfully: " << this->pathToDatabaseFile << "\n";
     } else {
@@ -66,7 +69,7 @@ fs::path Database::getPath() const {
     return pathToDatabaseFile;
 }
 
-Page Database::ReadPage(uint32_t pageID) {
+Page Database::ReadPage(uint32_t pageID) const {
     Page page;
 
     ifstream databaseFile(this->getPath().string(), ios::in | ios::binary);
@@ -84,17 +87,17 @@ Page Database::ReadPage(uint32_t pageID) {
     if (databaseFile.eof()) {
         throw std::runtime_error("Unexpected EOF while reading page " + std::to_string(pageID));
     }
-    else if (databaseFile.fail()) {
+    if (databaseFile.fail()) {
         throw std::runtime_error("Logical read error (maybe short read) for page " + std::to_string(pageID));
     }
-    else if (databaseFile.bad()) {
+    if (databaseFile.bad()) {
         throw std::runtime_error("I/O error while reading page " + std::to_string(pageID));
     }
 
     return page;
 }
 
-MetaPage Database::ReadMetaPage() {
+MetaPage Database::ReadMetaPage() const {
     MetaPage page;
 
     ifstream databaseFile(this->getPath().string(), ios::in | ios::binary);
@@ -115,7 +118,7 @@ MetaPage Database::ReadMetaPage() {
     return page;
 }
 
-bool Database::WriteBasicPage(BasicPage &pageToWrite) {
+bool Database::WriteBasicPage(BasicPage &pageToWrite) const {
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
         return false;
@@ -126,12 +129,10 @@ bool Database::WriteBasicPage(BasicPage &pageToWrite) {
     if (!databaseFile.good()) return false;
 
     databaseFile.write(pageToWrite.mData, Page::PAGE_SIZE);
-    if (!databaseFile) return false;
-
-    return true;
+    return !!databaseFile;
 }
 
-bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
+bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
         return false; // could not open
@@ -140,11 +141,10 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) {
     if (!databaseFile.good()) return false;
 
     databaseFile.write(PageToWrite.mData, Page::PAGE_SIZE);
-    if (!databaseFile) return false;
-    return true;
+    return !!databaseFile;
 }
 
-std::optional<leafNodeCell> Database::Get(const string& key){
+std::optional<leafNodeCell> Database::Get(const string& key) const {
     // check keys length
     if (key.length() > 255) {
         cout << "Key is too long!\n";
@@ -155,13 +155,15 @@ std::optional<leafNodeCell> Database::Get(const string& key){
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) { 
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
@@ -174,10 +176,9 @@ std::optional<leafNodeCell> Database::Get(const string& key){
         cout << cell->value << "\n";
         return cell;
     }
-    else {
-        cout << "Key not found!\n";
-        return std::nullopt;
-    }
+
+    cout << "Key not found!\n";
+    return std::nullopt;
 }
 
 bool Database::Set(const string& key, const string& value){
@@ -193,7 +194,9 @@ bool Database::Set(const string& key, const string& value){
     MetaPage MetaPage1;
     MetaPage1 = this->ReadPage(0);
     uint32_t rootPageID = MetaPage1.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     this->wal.LogSet(key, value);
 
@@ -201,7 +204,7 @@ bool Database::Set(const string& key, const string& value){
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     //loop to leaf page
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         //debug
         uint32_t pageID = internal.FindPointerByKey(key);
@@ -349,7 +352,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     uint32_t Child1ID = InternalToSplit.Header()->pageID;
     uint32_t Child2ID = Meta.Header()->lastPageID + 1;
 
-    // create 2 new childs 
+    // create 2 new childs
     InternalPage Child1(Child1ID);
     InternalPage Child2(Child2ID);
     Meta.Header()->lastPageID++;
@@ -426,17 +429,19 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     }
 }
 
-vector<string> Database::GetKeys(){
+vector<string> Database::GetKeys() const {
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){ 
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
@@ -454,18 +459,20 @@ vector<string> Database::GetKeys(){
     return keys;
 }
 
-vector<string> Database::GetKeys(const string &prefix){
+vector<string> Database::GetKeys(const string &prefix) const {
     vector<string> keys = this->GetKeys();
     vector<string> filteredKeys;
-    uint32_t prefixLenght = prefix.length();
-    for (auto key : keys) {
-        string substr = key.substr(0, prefixLenght);
-        if (substr == prefix) filteredKeys.push_back(key);
+    uint32_t prefixLength = prefix.length();
+    for (const auto& key : keys) {
+        string substr = key.substr(0, prefixLength);
+        if (substr == prefix) {
+            filteredKeys.push_back(key);
+        }
     }
     return filteredKeys;
 }
 
-vector<leafNodeCell> Database::GetFF(const string &key){
+vector<leafNodeCell> Database::GetFF(const string &key) const {
 
     vector<leafNodeCell> keyValuePairs;
 
@@ -479,13 +486,15 @@ vector<leafNodeCell> Database::GetFF(const string &key){
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
@@ -509,7 +518,7 @@ vector<leafNodeCell> Database::GetFF(const string &key){
     return keyValuePairs;
 }
 
-vector<leafNodeCell> Database::GetFF100(const string &key){
+vector<leafNodeCell> Database::GetFF100(const string &key) const {
 
     vector<leafNodeCell> keyValuePairs;
 
@@ -523,13 +532,15 @@ vector<leafNodeCell> Database::GetFF100(const string &key){
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
@@ -542,7 +553,9 @@ vector<leafNodeCell> Database::GetFF100(const string &key){
         auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
         keyValuePairs.push_back(cell);
         counter++;
-        if (counter == 100) return keyValuePairs;
+        if (counter == 100) {
+            return keyValuePairs;
+        }
     }
 
     // traverse other leaves
@@ -551,13 +564,15 @@ vector<leafNodeCell> Database::GetFF100(const string &key){
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
             counter++;
-            if (counter == 100) return keyValuePairs;
+            if (counter == 100) {
+                return keyValuePairs;
+            }
         }
     }
     return keyValuePairs;
 }
 
-vector<leafNodeCell> Database::GetFB(const string &key){
+vector<leafNodeCell> Database::GetFB(const string &key) const {
 
     vector<leafNodeCell> keyValuePairs;
 
@@ -570,13 +585,15 @@ vector<leafNodeCell> Database::GetFB(const string &key){
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
@@ -585,7 +602,7 @@ vector<leafNodeCell> Database::GetFB(const string &key){
 
     LeafPage leaf(currentPage);
     bool stop = false;
-    while (stop != true) {
+    while (!stop) {
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
             keyValuePairs.push_back(cell);
@@ -601,7 +618,7 @@ vector<leafNodeCell> Database::GetFB(const string &key){
     return reversed;
 }
 
-vector<leafNodeCell> Database::GetFB100(const string &key){
+vector<leafNodeCell> Database::GetFB100(const string &key) const {
 
     vector<leafNodeCell> keyValuePairs;
 
@@ -614,13 +631,15 @@ vector<leafNodeCell> Database::GetFB100(const string &key){
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
@@ -629,7 +648,7 @@ vector<leafNodeCell> Database::GetFB100(const string &key){
 
     LeafPage leaf(currentPage);
     bool stop = false;
-    while (stop != true) {
+    while (!stop) {
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
             keyValuePairs.push_back(cell);
@@ -657,7 +676,9 @@ bool Database::Remove(const string& key) {
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     this->wal.LogDelete(key);
 
@@ -665,7 +686,7 @@ bool Database::Remove(const string& key) {
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
@@ -674,17 +695,19 @@ bool Database::Remove(const string& key) {
     //get key from leaf page (if exists)
     LeafPage leaf(currentPage);
     auto cell = leaf.FindKey(key);
-    if (!cell.has_value()) return false;
-    else {
-        leaf.RemoveKey(key);
-        this->WriteBasicPage(leaf);
-        cout << "Removed key: " << key << "\n";
-        return true;
+    if (!cell.has_value()) {
+        return false;
     }
+
+    leaf.RemoveKey(key);
+    this->WriteBasicPage(leaf);
+    cout << "Removed key: " << key << "\n";
+    return true;
+
 }
 
 void Database::Optimize(){
-    uintmax_t oldSize;
+    uintmax_t oldSize = 0;
     try {
         oldSize = std::filesystem::file_size(this->pathToDatabaseFile);
     } catch (const std::filesystem::filesystem_error& e) {
@@ -695,13 +718,15 @@ void Database::Optimize(){
     MetaPage CurrentMetaPage;
     CurrentMetaPage = this->ReadPage(0);
     uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) throw std::runtime_error("rootPageID is zero!");
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
 
     // loop to first leaf
-    while (currentPage.Header()->isLeaf != true){
+    while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
@@ -718,7 +743,7 @@ void Database::Optimize(){
         leaf = ReadPage(*leaf.Special());
     }
 
-    uintmax_t newSize;
+    uintmax_t newSize = 0;
     try {
         newSize = std::filesystem::file_size(OptimizedDb.pathToDatabaseFile);
     } catch (const std::filesystem::filesystem_error& e) {
@@ -778,14 +803,14 @@ bool Database::RecoverFromWal() {
     }
 }
 
-void Database::CoutDatabase(){
+void Database::CoutDatabase() const {
     MetaPage CurrentMetaPage = ReadMetaPage();
     CurrentMetaPage.Header()->CoutHeader();
     uint32_t pagenum = CurrentMetaPage.Header()->lastPageID;
     cout << "pagenum = " << pagenum << "\n\n";
     for (uint32_t i = 1; i <= pagenum; i++) {
         BasicPage page = ReadPage(i);
-        if (page.Header()->isLeaf == true) {
+        if (page.Header()->isLeaf) {
             LeafPage leaf(page);
             leaf.CoutPage();
         }

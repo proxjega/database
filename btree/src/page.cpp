@@ -1,5 +1,5 @@
 #include "../include/page.h"
-#include "../include/database.h" 
+#include "../include/database.h"
 #include <cstdint>
 #include <cstring>
 
@@ -33,23 +33,23 @@ void MetaPageHeader::CoutHeader(){
 // ---------------- Page ----------------
 /**
  * @brief Default constructor (sets everything to zero)
- * 
+ *
  */
 Page::Page(){
     std::memset(mData, 0, PAGE_SIZE);
 }
 /**
  * @brief Copy constructor
- * 
- * @param page 
+ *
+ * @param page
  */
 Page::Page(const Page &page) {
     std::memcpy(this->mData, page.mData, PAGE_SIZE);
 }
 /**
  * @brief Return pointer to page's data
- * 
- * @return char* 
+ *
+ * @return char*
  */
 char* Page::getData() {
     return mData;
@@ -59,8 +59,8 @@ char* Page::getData() {
 
 /**
  * @brief Constructor when we know data of the page (header)
- * 
- * @param header 
+ *
+ * @param header
  */
 BasicPage::BasicPage(PageHeader header) {
     std::memcpy(mData, &header, sizeof(PageHeader));
@@ -68,8 +68,8 @@ BasicPage::BasicPage(PageHeader header) {
 
 /**
  * @brief Copy constructor from Page object
- * 
- * @param page 
+ *
+ * @param page
  */
 BasicPage::BasicPage(Page page) {
     std::memcpy(this->mData, page.getData(), PAGE_SIZE);
@@ -77,18 +77,18 @@ BasicPage::BasicPage(Page page) {
 
 /**
  * @brief Pointer to page's header
- * 
- * @return PageHeader* 
+ *
+ * @return PageHeader*
  */
 PageHeader* BasicPage::Header() {
     return reinterpret_cast<PageHeader*>(mData);
 }
 
-    
+
 /**
  * @brief Pointer to the start of offsets array. Used with Header()->numberOfCells
- * 
- * @return uint16_t* 
+ *
+ * @return uint16_t*
  */
 uint16_t* BasicPage::Offsets() {
     return reinterpret_cast<uint16_t*>(mData+sizeof(PageHeader));
@@ -96,8 +96,8 @@ uint16_t* BasicPage::Offsets() {
 
 /**
  * @brief Pointer to the special place in the BasicPage. (for LeafPage - pointer to sibling Page, for InternalPage - pointer to last child page)
- * 
- * @return uint32_t* 
+ *
+ * @return uint32_t*
  */
 uint32_t* BasicPage::Special(){
     return reinterpret_cast<uint32_t*>(mData + Header()->offsetToStartOfSpecialSpace);
@@ -105,8 +105,8 @@ uint32_t* BasicPage::Special(){
 
 /**
  * @brief Calculates how many free bytes does page have.
- * 
- * @return int16_t 
+ *
+ * @return int16_t
  */
 int16_t BasicPage::FreeSpace() {
     return this->Header()->offsetToEndOfFreeSpace - this->Header()->offsetToStartOfFreeSpace;
@@ -118,8 +118,8 @@ int16_t BasicPage::FreeSpace() {
 
 /**
  * @brief Construct a new MetaPage object when we know info
- * 
- * @param header 
+ *
+ * @param header
  */
 MetaPage::MetaPage(MetaPageHeader header) {
     std::memcpy(mData, &header, sizeof(MetaPageHeader));
@@ -127,8 +127,8 @@ MetaPage::MetaPage(MetaPageHeader header) {
 
 /**
  * @brief Copy MetaPage from base class Page
- * 
- * @param page 
+ *
+ * @param page
  */
 MetaPage::MetaPage(Page page) {
     std::memcpy(mData, page.getData(), PAGE_SIZE);
@@ -136,8 +136,8 @@ MetaPage::MetaPage(Page page) {
 
 /**
  * @brief Get pointer to MetaPage Header
- * 
- * @return MetaPageHeader* 
+ *
+ * @return MetaPageHeader*
  */
 MetaPageHeader* MetaPage::Header() {
     return reinterpret_cast<MetaPageHeader*>(mData);
