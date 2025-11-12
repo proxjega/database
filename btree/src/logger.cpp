@@ -57,7 +57,7 @@ WAL::WAL(const string &name, size_t MaxSegmentSizeBytes)
     }
 }
 
-fs::path WAL::GetSegmentPath(uint64_t segmentNum) const {
+fs::path WAL::GetSegmentPath(const uint64_t &segmentNum) const {
     return this->walDirectory / (this->name + "_" + std::to_string(segmentNum) + ".log");
 }
 
@@ -252,7 +252,7 @@ vector<WalRecord> WAL::ReadAll() {
     return records;
 }
 
-vector<WalRecord> WAL::ReadFrom(const uint64_t lsn) {
+vector<WalRecord> WAL::ReadFrom(const uint64_t &lsn) {
     vector<WalRecord> records;
     auto segments = this->GetAllSegments();
 
@@ -308,7 +308,7 @@ bool WAL::ClearAll() {
     }
 }
 
-bool WAL::ClearUpTo(uint64_t lsn) {
+bool WAL::ClearUpTo(const uint64_t &lsn) {
     auto segments = GetAllSegments();
     vector<WalRecord> recordsToKeep;
 
@@ -366,7 +366,7 @@ bool WAL::ClearUpTo(uint64_t lsn) {
     return true;
 }
 
-bool WAL::DeleteOldSegments(uint64_t beforeSegment) {
+bool WAL::DeleteOldSegments(const uint64_t &beforeSegment) {
     try {
         auto segments = this->GetAllSegments();
 
