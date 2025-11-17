@@ -472,16 +472,56 @@ vector<string> Database::GetKeys() const {
 }
 
 vector<string> Database::GetKeys(const string &prefix) const {
-    vector<string> keys = this->GetKeys();
-    vector<string> filteredKeys;
+    MetaPage CurrentMetaPage;
+    CurrentMetaPage = this->ReadPage(0);
+    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
+    // initialize variables
+    vector<string> keys;
     uint32_t prefixLength = prefix.length();
-    for (const auto& key : keys) {
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to page where prefix would be
+    while (!currentPage.Header()->isLeaf){
+        InternalPage internal(currentPage);
+        uint32_t pageID = internal.FindPointerByKey(prefix);
+        currentPage = this->ReadPage(pageID);
+    }
+    LeafPage currentLeaf(currentPage);
+
+    // loop to first key with that prefix
+    auto index = currentLeaf.FindInsertPosition(prefix);
+    // add all keys if they have the prefix
+    for(auto i = index; i < currentLeaf.Header()->numberOfCells; i++) {
+        string key = currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]).key;
         string substr = key.substr(0, prefixLength);
         if (substr == prefix) {
-            filteredKeys.push_back(key);
+            keys.push_back(key);
+        }
+        // stop if key does not have the prefix
+        else {
+            return keys;
         }
     }
-    return filteredKeys;
+    //loop other leaves
+    while (*currentLeaf.Special2()!=0) {
+        currentLeaf = ReadPage(*currentLeaf.Special2());
+        for (int i = 0; i < currentLeaf.Header()->numberOfCells; i++) {
+            string key = currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]).key;
+            string substr = key.substr(0, prefixLength);
+            if (substr == prefix) {
+                keys.push_back(key);
+            }
+            else {
+                return keys;
+            }
+        }
+    }
+    return keys;
 }
 
 vector<leafNodeCell> Database::GetFF(const string &key) const {
