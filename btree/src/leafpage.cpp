@@ -15,9 +15,9 @@ LeafPage::LeafPage(uint32_t pageID) {
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
     pageHeader.lastSequenceNumber = 1;
-    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(sizeof(uint32_t));
+    pageHeader.offsetToEndOfFreeSpace = LeafPage::PAGE_SIZE-(sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer
+    pageHeader.offsetToStartOfSpecialSpace = LeafPage::PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
     std::memset(this->Special(), 0, sizeof(uint32_t));
 }

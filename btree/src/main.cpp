@@ -16,7 +16,7 @@ void TEST(){
     header.offsetToEndOfFreeSpace = 4096;
     header.offsetToStartOfSpecialSpace = -1;
     //test1:
-    
+
     cout << "\n\nTEST1:\n";
     Database Duombaze("duombaze1");
     BasicPage Page1(header);
@@ -39,11 +39,11 @@ void TEST(){
     rootpage.Header()->CoutHeader();
 
 
-    //test3: 
+    //test3:
     cout << "\n\nTEST3:\n";
     Database Database1("db");
     LeafPage page1 = Database1.ReadPage(1);
-   
+
     page1.InsertKeyValue("z", "val2");
     page1.InsertKeyValue("key4", "val2");
     page1.InsertKeyValue("key2", "val2");
@@ -51,7 +51,7 @@ void TEST(){
     page1.InsertKeyValue("key3", "val3");
     page1.InsertKeyValue("a", "val2");
     for (int i = 0; i < page1.Header()->numberOfCells; i++) {
-        cout << "offset: " << page1.Offsets()[i] << "\n"; 
+        cout << "offset: " << page1.Offsets()[i] << "\n";
         leafNodeCell cell = page1.GetKeyValue(page1.Offsets()[i]);
         cout << cell.key << ": " << cell.value << "\n";
     }
@@ -59,7 +59,7 @@ void TEST(){
     cout <<"written.\n";
     LeafPage page2 = Database1.ReadPage(1);
     for (int i = 0; i < page2.Header()->numberOfCells; i++) {
-        cout << "offset: " << page2.Offsets()[i] << "\n"; 
+        cout << "offset: " << page2.Offsets()[i] << "\n";
         leafNodeCell cell = page2.GetKeyValue(page2.Offsets()[i]);
         cout << cell.key << ": " << cell.value << "\n";
     }
@@ -73,7 +73,7 @@ void TEST(){
     Page3.InsertKeyAndPointer("aa", 1);
     Page3.InsertKeyAndPointer("zz", 1);
     for (int i = 0; i < Page3.Header()->numberOfCells; i++) {
-        cout << "offset: " << Page3.Offsets()[i] << ", "; 
+        cout << "offset: " << Page3.Offsets()[i] << ", ";
         internalNodeCell cell = Page3.GetKeyAndPointer(Page3.Offsets()[i]);
         cout << cell.key << ": " << cell.childPointer << "\n";
     }
@@ -96,7 +96,7 @@ void TEST(){
     Database Database4("db");
     cout << Database1.getPath().string() <<"\n";
     LeafPage page4 = Database1.ReadPage(1);
-   
+
     page4.InsertKeyValue("z", "val2");
     page4.InsertKeyValue("key4", "val2");
     page4.InsertKeyValue("key2", "val2");
@@ -128,7 +128,7 @@ void TEST(){
     internal.RemoveKey("a");
     internal.CoutPage();
 
-    //test8: 
+    //test8:
     Database DataBaseSetTest("DataBaseSetTest");
     for (long int i = 100000000000; i < 100000000200; i++) {
         DataBaseSetTest.Set(to_string(i), to_string(i));
@@ -179,30 +179,13 @@ int main(){
     //WTEST();
     Database DataBaseSetTest("DataBaseSetTest");
 
-    DataBaseSetTest.Set("a", "a");
-    DataBaseSetTest.CoutDatabase();
     for (int i = 65; i <125; i++) {
-        string key = "";
+        string key;
         for (int j = 0; j < 255; j++) {
             key.push_back(static_cast<char>(i));
         }
         DataBaseSetTest.Set(key, key);
     }
-    for (int i = 66; i <125; i++) {
-        string key = "A";
-        for (int j = 0; j < 254; j++) {
-            key.push_back(static_cast<char>(i));
-        }
-        DataBaseSetTest.Set(key, key);
-    }
-    for (int i = 65; i <125; i++) {
-        string key = "";
-        for (int j = 0; j < 255; j++) {
-            key.push_back(static_cast<char>(i));
-        }
-        DataBaseSetTest.Remove(key);
-    }
-    DataBaseSetTest.CoutDatabase();
-    DataBaseSetTest.Optimize();
+
     DataBaseSetTest.CoutDatabase();
 }
