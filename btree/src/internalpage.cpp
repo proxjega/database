@@ -16,11 +16,12 @@ InternalPage::InternalPage(uint32_t pageID) {
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = false;
     pageHeader.numberOfCells = 0;
-    pageHeader.offsetToEndOfFreeSpace = InternalPage::PAGE_SIZE-sizeof(uint32_t);
+    pageHeader.offsetToEndOfFreeSpace = InternalPage::PAGE_SIZE-(2 * sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t); // last child pointer
+    pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-(2 * sizeof(uint32_t));
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
-    std::memset(this->Special(), 0, sizeof(uint32_t));
+    std::memset(this->Special1(), 0, sizeof(uint32_t)); // last child pointer
+    std::memset(this->Special2(), 0, sizeof(uint32_t)); // empty
 }
 
 /**
@@ -125,7 +126,7 @@ uint32_t InternalPage::FindPointerByKey(const string &key){
         return GetKeyAndPointer(offset).key < key;
     });
     if (iterator == end) {
-        return *Special(); //return special pointer if it the key is bigger than everyone else
+        return *Special1(); //return special pointer if it the key is bigger than everyone else
     }
     return GetKeyAndPointer(*iterator).childPointer;
 }
@@ -197,7 +198,7 @@ void InternalPage::UpdatePointerToTheRightFromKey(const string& key, uint32_t po
         memcpy(pCurrentPosition, &pointer, sizeof(pointer));
     }
     else {
-        memcpy(this->Special(), &pointer, sizeof(pointer));
+        memcpy(this->Special1(), &pointer, sizeof(pointer));
     }
 }
 
@@ -209,6 +210,6 @@ void InternalPage::CoutPage() {
         internalNodeCell cell = this->GetKeyAndPointer(this->Offsets()[i]);
         cout << cell.key << ":" << cell.childPointer << "\n";
     }
-    cout << "Special: " << *this->Special() << "\n";
+    cout << "Special1: " << *this->Special1() << "\n";
     cout << "---ENDCOUTPAGE---\n\n";
 }

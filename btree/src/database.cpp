@@ -267,9 +267,11 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
 
     // create 2 new children and assign sibling pointers
     LeafPage Child1(Child1ID);
-    memcpy(Child1.Special(), &Child2ID, sizeof(uint32_t));
+    memcpy(Child1.Special1(), LeafToSplit.Special1(), sizeof(uint32_t));
+    memcpy(Child1.Special2(), &Child2ID, sizeof(uint32_t));
     LeafPage Child2(Child2ID);
-    memcpy(Child2.Special(), LeafToSplit.Special(), sizeof(uint32_t));
+    memcpy(Child2.Special1(), &Child1ID, sizeof(uint32_t));
+    memcpy(Child2.Special2(), LeafToSplit.Special2(), sizeof(uint32_t));
 
     //split leaf into 2 leaves
     uint16_t i = 0;
@@ -291,7 +293,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
         //create parent and insert pointers
         InternalPage Parent(newParentID);
         Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID);
-        memcpy(Parent.Special(), &Child2ID, sizeof(Child2ID));
+        memcpy(Parent.Special1(), &Child2ID, sizeof(Child2ID));
 
         // make parent the root
         Meta.Header()->rootPageID = newParentID;
@@ -367,14 +369,14 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     }
     //copy pointer of middle key (that will be moved to parent) to child1 special
     uint32_t pointerOfKeyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[mid]).childPointer;
-    memcpy(Child1.Special(), &pointerOfKeyToMoveToParent, sizeof(pointerOfKeyToMoveToParent));
+    memcpy(Child1.Special1(), &pointerOfKeyToMoveToParent, sizeof(pointerOfKeyToMoveToParent));
 
     //copy cells to second child and assing special pointer (to the most right child)
     for (uint16_t i = mid + 1; i < total; i++) {
         auto cell = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]);
         Child2.InsertKeyAndPointer(cell.key, cell.childPointer);
     }
-    memcpy(Child2.Special(), InternalToSplit.Special(), sizeof(pointerOfKeyToMoveToParent));
+    memcpy(Child2.Special1(), InternalToSplit.Special1(), sizeof(pointerOfKeyToMoveToParent));
 
     //update child2 children parentpointers (child1 id is the same so it not needed to be updated)
     for (uint16_t j = 0; j < Child2.Header()->numberOfCells; j++) {
@@ -384,7 +386,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
         this->WriteBasicPage(GrandchildPage);
     }
     {
-    BasicPage GrandchildPage = this->ReadPage(*Child2.Special());
+    BasicPage GrandchildPage = this->ReadPage(*Child2.Special1());
     GrandchildPage.Header()->parentPageID = Child2ID;
     this->WriteBasicPage(GrandchildPage);
     }
@@ -397,7 +399,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
         //create parent and insert pointers
         InternalPage Parent(newParentID);
         Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID);
-        memcpy(Parent.Special(), &Child2ID, sizeof(Child2ID));
+        memcpy(Parent.Special1(), &Child2ID, sizeof(Child2ID));
 
         // make parent the root
         Meta.Header()->rootPageID = newParentID;
@@ -453,11 +455,11 @@ vector<string> Database::GetKeys() const {
 
     vector<string> keys;
     LeafPage leaf(currentPage);
-    while (*leaf.Special()!=0) {
+    while (*leaf.Special2()!=0) {
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keys.push_back(leaf.GetKeyValue(leaf.Offsets()[i]).key);
         }
-        leaf = ReadPage(*leaf.Special());
+        leaf = ReadPage(*leaf.Special2());
     }
     return keys;
 }
@@ -512,8 +514,8 @@ vector<leafNodeCell> Database::GetFF(const string &key) const {
     }
 
     // traverse other leaves
-    while (*leaf.Special()!=0) {
-        leaf = ReadPage(*leaf.Special());
+    while (*leaf.Special2()!=0) {
+        leaf = ReadPage(*leaf.Special2());
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
         }
@@ -562,8 +564,8 @@ vector<leafNodeCell> Database::GetFF100(const string &key) const {
     }
 
     // traverse other leaves
-    while (*leaf.Special()!=0) {
-        leaf = ReadPage(*leaf.Special());
+    while (*leaf.Special2()!=0) {
+        leaf = ReadPage(*leaf.Special2());
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
             counter++;
@@ -614,7 +616,7 @@ vector<leafNodeCell> Database::GetFB(const string &key) const {
                 break;
             }
         }
-        leaf = ReadPage(*leaf.Special());
+        leaf = ReadPage(*leaf.Special2());
     }
 
     vector<leafNodeCell> reversed(keyValuePairs.rbegin(), keyValuePairs.rend());
@@ -660,7 +662,7 @@ vector<leafNodeCell> Database::GetFB100(const string &key) const {
                 break;
             }
         }
-        leaf = ReadPage(*leaf.Special());
+        leaf = ReadPage(*leaf.Special2());
     }
 
     vector<leafNodeCell> reversed(keyValuePairs.rbegin(), keyValuePairs.rbegin() + 100);
@@ -738,12 +740,12 @@ void Database::Optimize(){
 
     vector<string> keys;
     LeafPage leaf(currentPage);
-    while (*leaf.Special()!=0) {
+    while (*leaf.Special2()!=0) {
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
             OptimizedDb.Set(cell.key, cell.value);
         }
-        leaf = ReadPage(*leaf.Special());
+        leaf = ReadPage(*leaf.Special2());
     }
 
     uintmax_t newSize = 0;

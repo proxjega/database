@@ -11,7 +11,6 @@ void TEST(){
     PageHeader header;
     header.pageID=1;
     header.isLeaf = false;
-    header.lastSequenceNumber = 1;
     header.offsetToStartOfFreeSpace = sizeof(PageHeader);
     header.offsetToEndOfFreeSpace = 4096;
     header.offsetToStartOfSpecialSpace = -1;
@@ -182,6 +181,13 @@ int main(){
     for (int i = 65; i <125; i++) {
         string key;
         for (int j = 0; j < 255; j++) {
+            key.push_back(static_cast<char>(i));
+        }
+        DataBaseSetTest.Set(key, key);
+    }
+    for (int i = 65; i <125; i++) {
+        string key="A";
+        for (int j = 0; j < 254; j++) {
             key.push_back(static_cast<char>(i));
         }
         DataBaseSetTest.Set(key, key);
