@@ -14,11 +14,12 @@ LeafPage::LeafPage(uint32_t pageID) {
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
-    pageHeader.offsetToEndOfFreeSpace = LeafPage::PAGE_SIZE-(sizeof(uint32_t));
+    pageHeader.offsetToEndOfFreeSpace = LeafPage::PAGE_SIZE-(2 * sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = LeafPage::PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer
+    pageHeader.offsetToStartOfSpecialSpace = LeafPage::PAGE_SIZE-(2 * sizeof(uint32_t));
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
-    std::memset(this->Special(), 0, sizeof(uint32_t));
+    std::memset(this->Special1(), 0, sizeof(uint32_t)); // pointer to previous leaf
+    std::memset(this->Special2(), 0, sizeof(uint32_t)); // pointer to next leaf
 }
 
 /**
@@ -196,7 +197,8 @@ LeafPage LeafPage::Optimize(){
         OptimizedLeaf.InsertKeyValue(cell.key, cell.value);
     }
     OptimizedLeaf.Header()->parentPageID = this->Header()->parentPageID;
-    memcpy(OptimizedLeaf.Special(), this->Special(), sizeof(*this->Special()));
+    memcpy(OptimizedLeaf.Special1(), this->Special1(), sizeof(*this->Special1()));
+    memcpy(OptimizedLeaf.Special2(), this->Special2(), sizeof(*this->Special2()));
     return OptimizedLeaf;
 }
 
@@ -208,6 +210,7 @@ void LeafPage::CoutPage() {
         leafNodeCell cell = this->GetKeyValue(this->Offsets()[i]);
         cout << cell.key << ":" << cell.value << "\n";
     }
-    cout << "Special: " << *this->Special() << "\n";
+    cout << "Special1: " << *this->Special1() << "\n";
+    cout << "Special2: " << *this->Special2() << "\n";
     cout << "---ENDCOUTPAGE---\n\n";
 }

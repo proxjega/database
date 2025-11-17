@@ -26,7 +26,7 @@ struct PageHeader {
     uint16_t numberOfCells;
     uint16_t offsetToStartOfFreeSpace;
     uint16_t offsetToEndOfFreeSpace;
-    int16_t offsetToStartOfSpecialSpace;
+    uint16_t offsetToStartOfSpecialSpace;
     void CoutHeader();
 };
 
@@ -93,7 +93,8 @@ class BasicPage : public Page{
         // pointers to data
         PageHeader* Header();
         uint16_t* Offsets();
-        uint32_t* Special();
+        uint32_t* Special1();
+        uint32_t* Special2();
 
         //helpers
         int16_t FreeSpace();
