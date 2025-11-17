@@ -47,10 +47,8 @@ private:
     bool Set(const string& key, const string &value);
     vector<string> GetKeys() const;
     vector<string> GetKeys(const string &prefix) const;
-    vector<leafNodeCell> GetFF(const string &key) const;
-    vector<leafNodeCell> GetFF100(const string &key) const;
-    vector<leafNodeCell> GetFB(const string &key) const;
-    vector<leafNodeCell> GetFB100(const string &key) const;
+    vector<leafNodeCell> GetFF(const string &key, uint32_t n) const;
+    vector<leafNodeCell> GetFB(const string &key, uint32_t n) const;
     bool Remove(const string& key);
     void Optimize();
 

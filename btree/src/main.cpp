@@ -168,26 +168,23 @@ void TEST(){
         cout << key << "\n";
     }
     cout << "\n\n\n";
-    vector<leafNodeCell> getFFVector = DataBaseSetTest2.GetFB("iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii");
-    for (auto cell : getFFVector) {
-        cout << cell.key << ":" << cell.value << "\n";
-    }
 }
 
 int main(){
     //WTEST();
     Database DatabaseSetTest("DataBaseSetTest");
-  DatabaseSetTest.Set("2", "a");
-DatabaseSetTest.Set("20", "b");
-DatabaseSetTest.Set("200", "c");
-DatabaseSetTest.Set("201", "d");
-DatabaseSetTest.Set("3", "stop");
-DatabaseSetTest.Set("30", "x");
+    string key;
+    for (int i = 65; i <125; i++) {
+        key="";
+        for (int j = 0; j < 255; j++) {
+            key.push_back(static_cast<char>(i));
+        }
+        DatabaseSetTest.Set(key, key);
+    }
 
 
-
-    auto result = DatabaseSetTest.GetKeys("20000");
+    auto result = DatabaseSetTest.GetFB(key, 10);
     for (auto &key : result){
-        cout << key << "\n";
+        cout << key.key << "\n";
     }
 }
