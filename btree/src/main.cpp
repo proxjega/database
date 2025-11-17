@@ -177,21 +177,26 @@ void TEST(){
 int main(){
     //WTEST();
     Database DataBaseSetTest("DataBaseSetTest");
-
-    for (int i = 65; i <125; i++) {
-        string key;
-        for (int j = 0; j < 255; j++) {
-            key.push_back(static_cast<char>(i));
-        }
-        DataBaseSetTest.Set(key, key);
-    }
-    for (int i = 65; i <125; i++) {
-        string key="A";
-        for (int j = 0; j < 254; j++) {
-            key.push_back(static_cast<char>(i));
-        }
-        DataBaseSetTest.Set(key, key);
-    }
+    DataBaseSetTest.Set("a", "a");
+    DataBaseSetTest.Set("b", "b");
+    DataBaseSetTest.Set("a", "b");
+    DataBaseSetTest.Set("c", "a");
+    DataBaseSetTest.Set("d", "a");
+    DataBaseSetTest.Set("c", "a");
+    // for (int i = 65; i <125; i++) {
+    //     string key;
+    //     for (int j = 0; j < 255; j++) {
+    //         key.push_back(static_cast<char>(i));
+    //     }
+    //     DataBaseSetTest.Set(key, key);
+    // }
+    // for (int i = 65; i <125; i++) {
+    //     string key="A";
+    //     for (int j = 0; j < 254; j++) {
+    //         key.push_back(static_cast<char>(i));
+    //     }
+    //     DataBaseSetTest.Set(key, key);
+    // }
 
     DataBaseSetTest.CoutDatabase();
 }

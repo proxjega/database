@@ -28,6 +28,7 @@ LeafPage::LeafPage(uint32_t pageID) {
  * @param key key to insert
  * @param value value to insert
  * @details Deserializes key and value strings. Copies them into end of the page. Inserts an offset to them into offset array (in sorted manner, binary search)
+ * @returns true if new key was added and false if no key was added
  */
 bool LeafPage::InsertKeyValue(string key, string value) {
 
@@ -35,6 +36,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+    bool newKey = true;
 
     //check if it fits
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
@@ -45,6 +47,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     auto cell = this->FindKey(key);
     if (cell.has_value()) {
         this->RemoveKey(key);
+        newKey = false;
     }
 
     //insert in sorted manner
@@ -72,7 +75,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     memcpy(pCurrentPosition, value.data(), valueLength);
 
     Header()->numberOfCells++;
-    return true;
+    return newKey;
 }
 
 bool LeafPage::WillFit(const string &key, const string &value){
