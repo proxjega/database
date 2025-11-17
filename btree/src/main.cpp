@@ -176,27 +176,18 @@ void TEST(){
 
 int main(){
     //WTEST();
-    Database DataBaseSetTest("DataBaseSetTest");
-    DataBaseSetTest.Set("a", "a");
-    DataBaseSetTest.Set("b", "b");
-    DataBaseSetTest.Set("a", "b");
-    DataBaseSetTest.Set("c", "a");
-    DataBaseSetTest.Set("d", "a");
-    DataBaseSetTest.Set("c", "a");
-    // for (int i = 65; i <125; i++) {
-    //     string key;
-    //     for (int j = 0; j < 255; j++) {
-    //         key.push_back(static_cast<char>(i));
-    //     }
-    //     DataBaseSetTest.Set(key, key);
-    // }
-    // for (int i = 65; i <125; i++) {
-    //     string key="A";
-    //     for (int j = 0; j < 254; j++) {
-    //         key.push_back(static_cast<char>(i));
-    //     }
-    //     DataBaseSetTest.Set(key, key);
-    // }
+    Database DatabaseSetTest("DataBaseSetTest");
+  DatabaseSetTest.Set("2", "a");
+DatabaseSetTest.Set("20", "b");
+DatabaseSetTest.Set("200", "c");
+DatabaseSetTest.Set("201", "d");
+DatabaseSetTest.Set("3", "stop");
+DatabaseSetTest.Set("30", "x");
 
-    DataBaseSetTest.CoutDatabase();
+
+
+    auto result = DatabaseSetTest.GetKeys("20000");
+    for (auto &key : result){
+        cout << key << "\n";
+    }
 }
