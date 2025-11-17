@@ -69,7 +69,7 @@ struct leafNodeCell {
 class Page {
     friend class Database;
     public:
-        static constexpr uint16_t PAGE_SIZE = 4096;
+        static constexpr uint16_t PAGE_SIZE = 16384;
     protected:
         char mData[PAGE_SIZE];
     public:

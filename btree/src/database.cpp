@@ -172,7 +172,7 @@ std::optional<leafNodeCell> Database::Get(const string& key) const {
         currentPage = this->ReadPage(pageID);
     }
 
-    //get key from leaf page (if exists)
+    // get key from leaf page (if exists)
     LeafPage leaf(currentPage);
     auto cell = leaf.FindKey(key);
     if (cell.has_value()){
@@ -333,6 +333,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
 #endif
     InternalToSplit = this->ReadPage(InternalToSplit.Header()->pageID);
 
+    // check which key to move to parent
     uint16_t total = InternalToSplit.Header()->numberOfCells;
     uint16_t mid = total / 2;
     string keyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[mid]).key;

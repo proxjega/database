@@ -28,7 +28,7 @@ private:
     explicit Database(const string &name);
 
     static constexpr std::size_t MAX_KEY_LENGTH = 255;
-    static constexpr std::size_t MAX_VALUE_LENGTH = 255;
+    static constexpr std::size_t MAX_VALUE_LENGTH = 2048;
 
     // Accessors
     string getName() const;
