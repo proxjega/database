@@ -14,7 +14,6 @@ LeafPage::LeafPage(uint32_t pageID) {
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
-    pageHeader.lastSequenceNumber = 1;
     pageHeader.offsetToEndOfFreeSpace = LeafPage::PAGE_SIZE-(sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
     pageHeader.offsetToStartOfSpecialSpace = LeafPage::PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer

@@ -33,7 +33,6 @@ Database::Database(const string &name) : name(name), wal(name) {
         MetaPageHeader header{};
         header.lastPageID = 1;
         header.rootPageID = 1;
-        header.lastSequenceNumber = 1;
         MetaPage MetaPage1(header);
         if (!this->UpdateMetaPage(MetaPage1)) {
             throw std::runtime_error("Error updating meta page\n");
