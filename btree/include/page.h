@@ -19,8 +19,7 @@ using std::vector;
  * @brief Struct for header of basic page.
  *
  */
-struct PageHeader { // 24 bytes
-    uint64_t lastSequenceNumber;
+struct PageHeader {
     bool isLeaf;
     uint32_t pageID;
     uint32_t parentPageID;
@@ -38,7 +37,6 @@ struct PageHeader { // 24 bytes
 struct MetaPageHeader {
     uint32_t rootPageID;
     uint32_t lastPageID;
-    uint64_t lastSequenceNumber;
     void CoutHeader();
 };
 

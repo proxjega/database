@@ -16,7 +16,6 @@ InternalPage::InternalPage(uint32_t pageID) {
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = false;
     pageHeader.numberOfCells = 0;
-    pageHeader.lastSequenceNumber = 1; // get from logger class
     pageHeader.offsetToEndOfFreeSpace = InternalPage::PAGE_SIZE-sizeof(uint32_t);
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
     pageHeader.offsetToStartOfSpecialSpace = PAGE_SIZE-sizeof(uint32_t); // last child pointer
