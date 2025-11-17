@@ -33,8 +33,9 @@ Database::Database(const string &name) : name(name), wal(name) {
         MetaPageHeader header{};
         header.lastPageID = 1;
         header.rootPageID = 1;
-        MetaPage MetaPage1(header);
-        if (!this->UpdateMetaPage(MetaPage1)) {
+        header.keyNumber = 0;
+        MetaPage Meta(header);
+        if (!this->UpdateMetaPage(Meta)) {
             throw std::runtime_error("Error updating meta page\n");
         }
 
@@ -193,9 +194,9 @@ bool Database::Set(const string& key, const string& value){
     // this->wal.LogSet(key, value); nzn ar pries patikrinant duombazes struktura ar po.
 
     // get root page id
-    MetaPage MetaPage1;
-    MetaPage1 = this->ReadPage(0);
-    uint32_t rootPageID = MetaPage1.Header()->rootPageID;
+    MetaPage Meta;
+    Meta = this->ReadPage(0);
+    uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
@@ -208,31 +209,37 @@ bool Database::Set(const string& key, const string& value){
     //loop to leaf page
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
-        //debug
         uint32_t pageID = internal.FindPointerByKey(key);
         currentPage = this->ReadPage(pageID);
     }
-
+    // Should it increase key counter in metapage?
+    bool increaseKeyCount = false;
     // Try to insert
     LeafPage leaf(currentPage);
     if (leaf.WillFit(key, value)) {
-        leaf.InsertKeyValue(key, value);
+        increaseKeyCount = leaf.InsertKeyValue(key, value);
         this->WriteBasicPage(leaf);
     }
     // If doesnt fit - optimize and then try
     else {
         leaf = leaf.Optimize();
         if (leaf.WillFit(key, value)) {
-            leaf.InsertKeyValue(key, value);
+            increaseKeyCount = leaf.InsertKeyValue(key, value);
             this->WriteBasicPage(leaf);
         }
         // If still doesnt fit - split
         else {
             this->SplitLeafPage(leaf);
             this->Set(key, value);
+            return true;
         }
     }
-    cout << "OK\n";
+    if (increaseKeyCount) {
+        Meta = this->ReadPage(0);
+        Meta.Header()->keyNumber++;
+        this->UpdateMetaPage(Meta);
+    }
+    cout << "SET "<< key << ":" << value << " OK\n";
     return true;
 }
 
@@ -523,59 +530,6 @@ vector<leafNodeCell> Database::GetFF(const string &key) const {
     return keyValuePairs;
 }
 
-vector<leafNodeCell> Database::GetFF100(const string &key) const {
-
-    vector<leafNodeCell> keyValuePairs;
-
-    //check if key exists in database
-    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
-        cout << "No such key in database!\n";
-        return keyValuePairs;
-    }
-
-    // get root page id
-    MetaPage CurrentMetaPage;
-    CurrentMetaPage = this->ReadPage(0);
-    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) {
-        throw std::runtime_error("rootPageID is zero!");
-    }
-
-    // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
-
-    // loop to leaf
-    while (!currentPage.Header()->isLeaf){
-        InternalPage internal(currentPage);
-        uint32_t pageID = internal.FindPointerByKey(key);
-        currentPage = this->ReadPage(pageID);
-    }
-    uint16_t counter = 0;
-    //get keys from leaf page
-    LeafPage leaf(currentPage);
-    int16_t index = leaf.FindKeyIndex(key);// protection??
-    for (uint16_t i = index; i < leaf.Header()->numberOfCells; i++) {
-        auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
-        keyValuePairs.push_back(cell);
-        counter++;
-        if (counter == 100) {
-            return keyValuePairs;
-        }
-    }
-
-    // traverse other leaves
-    while (*leaf.Special2()!=0) {
-        leaf = ReadPage(*leaf.Special2());
-        for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
-            keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
-            counter++;
-            if (counter == 100) {
-                return keyValuePairs;
-            }
-        }
-    }
-    return keyValuePairs;
-}
 
 vector<leafNodeCell> Database::GetFB(const string &key) const {
 
@@ -623,51 +577,6 @@ vector<leafNodeCell> Database::GetFB(const string &key) const {
     return reversed;
 }
 
-vector<leafNodeCell> Database::GetFB100(const string &key) const {
-
-    vector<leafNodeCell> keyValuePairs;
-
-    //check if key exists in database
-    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
-        cout << "No such key in database!\n";
-        return keyValuePairs;
-    }
-
-    MetaPage CurrentMetaPage;
-    CurrentMetaPage = this->ReadPage(0);
-    uint32_t rootPageID = CurrentMetaPage.Header()->rootPageID;
-    if (rootPageID == 0) {
-        throw std::runtime_error("rootPageID is zero!");
-    }
-
-    // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
-
-    // loop to first leaf
-    while (!currentPage.Header()->isLeaf){
-        InternalPage internal(currentPage);
-        uint16_t firstOffset = internal.Offsets()[0];
-        uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
-        currentPage = this->ReadPage(pageID);
-    }
-
-    LeafPage leaf(currentPage);
-    bool stop = false;
-    while (!stop) {
-        for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
-            auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
-            keyValuePairs.push_back(cell);
-            if (cell.key == key) {
-                stop = true;
-                break;
-            }
-        }
-        leaf = ReadPage(*leaf.Special2());
-    }
-
-    vector<leafNodeCell> reversed(keyValuePairs.rbegin(), keyValuePairs.rbegin() + 100);
-    return reversed;
-}
 
 bool Database::Remove(const string& key) {
     if (key.length() > MAX_KEY_LENGTH) {
@@ -706,9 +615,11 @@ bool Database::Remove(const string& key) {
 
     leaf.RemoveKey(key);
     this->WriteBasicPage(leaf);
+    CurrentMetaPage.Header()->keyNumber--;
+    this->UpdateMetaPage(CurrentMetaPage);
+
     cout << "Removed key: " << key << "\n";
     return true;
-
 }
 
 void Database::Optimize(){
