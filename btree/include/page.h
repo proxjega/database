@@ -19,15 +19,14 @@ using std::vector;
  * @brief Struct for header of basic page.
  *
  */
-struct PageHeader { // 24 bytes
-    uint64_t lastSequenceNumber;
+struct PageHeader {
     bool isLeaf;
     uint32_t pageID;
     uint32_t parentPageID;
     uint16_t numberOfCells;
     uint16_t offsetToStartOfFreeSpace;
     uint16_t offsetToEndOfFreeSpace;
-    int16_t offsetToStartOfSpecialSpace;
+    uint16_t offsetToStartOfSpecialSpace;
     void CoutHeader();
 };
 
@@ -38,7 +37,7 @@ struct PageHeader { // 24 bytes
 struct MetaPageHeader {
     uint32_t rootPageID;
     uint32_t lastPageID;
-    uint64_t lastSequenceNumber;
+    uint64_t keyNumber;
     void CoutHeader();
 };
 
@@ -62,6 +61,16 @@ struct leafNodeCell {
     leafNodeCell(string key, string value) : key(std::move(key)), value(std::move(value)) {}
 };
 
+struct pagingResult {
+    vector<leafNodeCell> keyValuePairs;
+    uint32_t currentPage;
+    uint32_t totalPages;
+    uint32_t totalItems;
+    bool hasNextPage;
+    bool hasPreviousPage;
+};
+
+
 /**
  * @brief Base Page class. Has data array and few basic set get methods
  *
@@ -69,7 +78,7 @@ struct leafNodeCell {
 class Page {
     friend class Database;
     public:
-        static constexpr uint16_t PAGE_SIZE = 4096;
+        static constexpr uint16_t PAGE_SIZE = 16384;
     protected:
         char mData[PAGE_SIZE];
     public:
@@ -81,7 +90,9 @@ class Page {
 
 /**
  * @brief BasicPage class for all the pages in database excluding first one (metapage). Is base class for InternalPage and LeafPage.
- *
+ * Header - page's header with metadata
+ * Offsets - offset array
+ * Special1 and Special2 - 2 reserved Special places
  */
 class BasicPage : public Page{
     friend class Database;
@@ -95,7 +106,8 @@ class BasicPage : public Page{
         // pointers to data
         PageHeader* Header();
         uint16_t* Offsets();
-        uint32_t* Special();
+        uint32_t* Special1();
+        uint32_t* Special2();
 
         //helpers
         int16_t FreeSpace();

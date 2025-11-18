@@ -2,6 +2,11 @@
 
 #include "page.h"
 
+/**
+ * @brief LeafPage class for leaf nodes in b+tree. Stores key:value pairs.
+ * Special1 stores pointer to previous leaf. Special2 stores pointer to next leaf
+ *
+ */
 class LeafPage : public BasicPage {
        friend class Database;
     public:
@@ -25,4 +30,3 @@ class LeafPage : public BasicPage {
         // For debug
         void CoutPage();
 };
-

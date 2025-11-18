@@ -14,12 +14,12 @@ LeafPage::LeafPage(uint32_t pageID) {
     pageHeader.parentPageID = 0;
     pageHeader.isLeaf = true;
     pageHeader.numberOfCells = 0;
-    pageHeader.lastSequenceNumber = 1;
-    pageHeader.offsetToEndOfFreeSpace = this->PAGE_SIZE-(sizeof(uint32_t));
+    pageHeader.offsetToEndOfFreeSpace = LeafPage::PAGE_SIZE-(2 * sizeof(uint32_t));
     pageHeader.offsetToStartOfFreeSpace = sizeof(PageHeader);
-    pageHeader.offsetToStartOfSpecialSpace = this->PAGE_SIZE-(sizeof(uint32_t)); // sibling pointer
+    pageHeader.offsetToStartOfSpecialSpace = LeafPage::PAGE_SIZE-(2 * sizeof(uint32_t));
     std::memcpy(mData, &pageHeader, sizeof(PageHeader));
-    std::memset(this->Special(), 0, sizeof(uint32_t));
+    std::memset(this->Special1(), 0, sizeof(uint32_t)); // pointer to previous leaf
+    std::memset(this->Special2(), 0, sizeof(uint32_t)); // pointer to next leaf
 }
 
 /**
@@ -28,6 +28,7 @@ LeafPage::LeafPage(uint32_t pageID) {
  * @param key key to insert
  * @param value value to insert
  * @details Deserializes key and value strings. Copies them into end of the page. Inserts an offset to them into offset array (in sorted manner, binary search)
+ * @returns true if new key was added and false if no key was added
  */
 bool LeafPage::InsertKeyValue(string key, string value) {
 
@@ -35,6 +36,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     uint16_t valueLength = value.length();
     uint16_t cellLength = keyLength + valueLength + sizeof(keyLength) + sizeof(valueLength);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
+    bool newKey = true;
 
     //check if it fits
     if (this->FreeSpace() < cellLength + sizeof(offset) ) {
@@ -45,6 +47,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     auto cell = this->FindKey(key);
     if (cell.has_value()) {
         this->RemoveKey(key);
+        newKey = false;
     }
 
     //insert in sorted manner
@@ -54,10 +57,11 @@ bool LeafPage::InsertKeyValue(string key, string value) {
         Offsets()[i] = Offsets()[i-1];
     }
     Offsets()[positionToInsert] = offset;
-
+    // update metadata
     Header()->offsetToStartOfFreeSpace += sizeof(offset);
     Header()->offsetToEndOfFreeSpace -= cellLength;
 
+    // insert serialized new key value pair
     auto *pCurrentPosition = mData + offset;
 
     memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
@@ -72,7 +76,7 @@ bool LeafPage::InsertKeyValue(string key, string value) {
     memcpy(pCurrentPosition, value.data(), valueLength);
 
     Header()->numberOfCells++;
-    return true;
+    return newKey;
 }
 
 bool LeafPage::WillFit(const string &key, const string &value){
@@ -85,7 +89,7 @@ bool LeafPage::WillFit(const string &key, const string &value){
 }
 
 /**
- * @brief Gets key value pair by offset.
+ * @brief Gets key value pair by offset. Deserializes
  *
  * @param offset offset to keyvalue pair
  * @return leafNodeCell
@@ -112,7 +116,7 @@ leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
  * @brief Searches for the key in the page and returns key and value if found. Else returns nothing
  *
  * @param key
- * @return std::optional<leafNodeCell>
+ * @return leafNodeCell(key:value pair) struct or nullopt(null)
  */
 std::optional<leafNodeCell> LeafPage::FindKey(const string &key){
     int low = 0;
@@ -190,17 +194,30 @@ void LeafPage::RemoveKey(const string &key){
 
 }
 
+/**
+ * @brief Optimizes leafPage. Creates a new page and inserts all of the keys into it.
+ * Needed after many removals
+ *
+ * @return
+ */
 LeafPage LeafPage::Optimize(){
+    // create new leaf
     LeafPage OptimizedLeaf(this->Header()->pageID);
+
+    // fill it
     for (int i = 0; i < this->Header()->numberOfCells; i++) {
         auto cell = this->GetKeyValue(this->Offsets()[i]);
         OptimizedLeaf.InsertKeyValue(cell.key, cell.value);
     }
     OptimizedLeaf.Header()->parentPageID = this->Header()->parentPageID;
-    memcpy(OptimizedLeaf.Special(), this->Special(), sizeof(*this->Special()));
+    memcpy(OptimizedLeaf.Special1(), this->Special1(), sizeof(*this->Special1()));
+    memcpy(OptimizedLeaf.Special2(), this->Special2(), sizeof(*this->Special2()));
     return OptimizedLeaf;
 }
-
+/**
+ * @brief couts whole page. For debug
+ *
+ */
 void LeafPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";
     this->Header()->CoutHeader();
@@ -209,6 +226,7 @@ void LeafPage::CoutPage() {
         leafNodeCell cell = this->GetKeyValue(this->Offsets()[i]);
         cout << cell.key << ":" << cell.value << "\n";
     }
-    cout << "Special: " << *this->Special() << "\n";
+    cout << "Special1: " << *this->Special1() << "\n";
+    cout << "Special2: " << *this->Special2() << "\n";
     cout << "---ENDCOUTPAGE---\n\n";
 }
