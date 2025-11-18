@@ -183,8 +183,12 @@ int main(){
     }
 
 
-    auto result = DatabaseSetTest.GetFF(100, 1);
+    auto result = DatabaseSetTest.GetFB(50, 1);
     for (auto &key : result.keyValuePairs){
+        cout << key.key << "\n";
+    }
+    auto result2 = DatabaseSetTest.GetFB(50, 2);
+    for (auto &key : result2.keyValuePairs){
         cout << key.key << "\n";
     }
 }
