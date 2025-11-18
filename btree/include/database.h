@@ -48,7 +48,9 @@ private:
     vector<string> GetKeys() const;
     vector<string> GetKeys(const string &prefix) const;
     vector<leafNodeCell> GetFF(const string &key, uint32_t n) const;
+    pagingResult GetFF(uint32_t pageSize, uint32_t pageNum) const;
     vector<leafNodeCell> GetFB(const string &key, uint32_t n) const;
+    pagingResult GetFB(uint32_t pageSize, uint32_t pageNum) const;
     bool Remove(const string& key);
     void Optimize();
 

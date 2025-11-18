@@ -61,6 +61,16 @@ struct leafNodeCell {
     leafNodeCell(string key, string value) : key(std::move(key)), value(std::move(value)) {}
 };
 
+struct pagingResult {
+    vector<leafNodeCell> keyValuePairs;
+    uint32_t currentPage;
+    uint32_t totalPages;
+    uint32_t totalItems;
+    bool hasNextPage;
+    bool hasPreviousPage;
+};
+
+
 /**
  * @brief Base Page class. Has data array and few basic set get methods
  *
