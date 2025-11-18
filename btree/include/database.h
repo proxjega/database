@@ -15,6 +15,11 @@ class LeafPage;
 using std::string;
 namespace fs = std::filesystem;
 
+/**
+ * @brief Main Database class. Has all of the functionality methods (get, set, remove)
+ * as well as private page operations (read page, write page)
+ *
+ */
 class Database {
 private:
     string name;
@@ -22,6 +27,14 @@ private:
 
     WAL wal;
     bool RecoverFromWal();
+
+    // Page operations
+    Page ReadPage(uint32_t pageID) const;
+    MetaPage ReadMetaPage() const;
+    bool WriteBasicPage(BasicPage &PageToWrite) const;
+    bool UpdateMetaPage(MetaPage &PageToWrite) const;
+    void SplitLeafPage(LeafPage &LeafToSplit);
+    void SplitInternalPage(InternalPage &InternalToSplit);
 
     public:
     // Constructor
@@ -33,14 +46,6 @@ private:
     // Accessors
     string getName() const;
     fs::path getPath() const;
-
-    // Page operations
-    Page ReadPage(uint32_t pageID) const;
-    MetaPage ReadMetaPage() const;
-    bool WriteBasicPage(BasicPage &PageToWrite) const;
-    bool UpdateMetaPage(MetaPage &PageToWrite) const;
-    void SplitLeafPage(LeafPage &LeafToSplit);
-    void SplitInternalPage(InternalPage &InternalToSplit);
 
     // Main operations
     std::optional<leafNodeCell> Get(const string &key) const;
@@ -56,6 +61,5 @@ private:
 
     // For Debug
     void CoutDatabase() const;
-    void FoutDatabase();
 
 };
