@@ -57,10 +57,11 @@ bool LeafPage::InsertKeyValue(string key, string value) {
         Offsets()[i] = Offsets()[i-1];
     }
     Offsets()[positionToInsert] = offset;
-
+    // update metadata
     Header()->offsetToStartOfFreeSpace += sizeof(offset);
     Header()->offsetToEndOfFreeSpace -= cellLength;
 
+    // insert serialized new key value pair
     auto *pCurrentPosition = mData + offset;
 
     memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
@@ -88,7 +89,7 @@ bool LeafPage::WillFit(const string &key, const string &value){
 }
 
 /**
- * @brief Gets key value pair by offset.
+ * @brief Gets key value pair by offset. Deserializes
  *
  * @param offset offset to keyvalue pair
  * @return leafNodeCell
@@ -115,7 +116,7 @@ leafNodeCell LeafPage::GetKeyValue(uint16_t offset) {
  * @brief Searches for the key in the page and returns key and value if found. Else returns nothing
  *
  * @param key
- * @return std::optional<leafNodeCell>
+ * @return leafNodeCell(key:value pair) struct or nullopt(null)
  */
 std::optional<leafNodeCell> LeafPage::FindKey(const string &key){
     int low = 0;
@@ -193,8 +194,17 @@ void LeafPage::RemoveKey(const string &key){
 
 }
 
+/**
+ * @brief Optimizes leafPage. Creates a new page and inserts all of the keys into it.
+ * Needed after many removals
+ *
+ * @return
+ */
 LeafPage LeafPage::Optimize(){
+    // create new leaf
     LeafPage OptimizedLeaf(this->Header()->pageID);
+
+    // fill it
     for (int i = 0; i < this->Header()->numberOfCells; i++) {
         auto cell = this->GetKeyValue(this->Offsets()[i]);
         OptimizedLeaf.InsertKeyValue(cell.key, cell.value);
@@ -204,7 +214,10 @@ LeafPage LeafPage::Optimize(){
     memcpy(OptimizedLeaf.Special2(), this->Special2(), sizeof(*this->Special2()));
     return OptimizedLeaf;
 }
-
+/**
+ * @brief couts whole page. For debug
+ *
+ */
 void LeafPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";
     this->Header()->CoutHeader();

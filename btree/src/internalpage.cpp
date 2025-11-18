@@ -32,6 +32,7 @@ InternalPage::InternalPage(uint32_t pageID) {
  * @param pointer
  */
 bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
+    // for serialization
     uint16_t keyLength = key.length();
     uint16_t cellLength = keyLength + sizeof(keyLength) + sizeof(pointer);
     uint16_t offset = Header()->offsetToEndOfFreeSpace - cellLength;
@@ -40,7 +41,7 @@ bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
         return false;
     }
 
-    //insert in sorted manner
+    //insert offset in sorted manner
     uint16_t positionToInsert = FindInsertPosition(key);
 
     for (int i = Header()->numberOfCells; i > positionToInsert; i--) {
@@ -48,24 +49,32 @@ bool InternalPage::InsertKeyAndPointer(string key, uint32_t pointer){
     }
     Offsets()[positionToInsert] = offset;
 
+    // change metadata
     Header()->offsetToStartOfFreeSpace += sizeof(offset);
     Header()->offsetToEndOfFreeSpace -= cellLength;
 
+    // insert serialized key and pointer
     auto *pCurrentPosition = mData + offset;
-
+    // write key length
     memcpy(pCurrentPosition, &keyLength, sizeof(keyLength));
     pCurrentPosition += sizeof(keyLength);
-
+    //write key
     strcpy(pCurrentPosition, key.data());
     pCurrentPosition += keyLength;
-
+    // write pointer
     memcpy(pCurrentPosition, &pointer, sizeof(pointer));
 
-
+    // update metadata
     Header()->numberOfCells++;
     return true;
 }
-
+/**
+ * @brief Checks if the key and pointer will fit
+ *
+ * @param key
+ * @param pointer
+ * @return
+ */
 bool InternalPage::WillFit(const string &key, uint32_t pointer){
     uint16_t keyLength = key.length();
     uint16_t cellLength = keyLength + sizeof(keyLength) + sizeof(pointer);
@@ -74,7 +83,7 @@ bool InternalPage::WillFit(const string &key, uint32_t pointer){
     return this->FreeSpace() >= cellLength + sizeof(offset);
 }
 /**
- * @brief Get key pointer pair by offset
+ * @brief Get key pointer pair by offset. Deserializes data
  *
  * @param offset
  * @return internalNodeCell
@@ -173,7 +182,12 @@ void InternalPage::RemoveKey(const string &key){
     Header()->numberOfCells--;
 
 }
-
+/**
+ * @brief Updates a pointer to a child to the right from given key. Needed when leaves are splitted
+ *
+ * @param key pointer to the right of this key will be updated
+ * @param pointer pointer to update
+ */
 void InternalPage::UpdatePointerToTheRightFromKey(const string& key, uint32_t pointer){
     // get the index of given key
     int16_t keyIndex = FindKeyIndex(key);
@@ -201,7 +215,10 @@ void InternalPage::UpdatePointerToTheRightFromKey(const string& key, uint32_t po
         memcpy(this->Special1(), &pointer, sizeof(pointer));
     }
 }
-
+/**
+ * @brief couts the content of page. For debug
+ *
+ */
 void InternalPage::CoutPage() {
     cout << "---STARTCOUTPAGE---\n";
     this->Header()->CoutHeader();

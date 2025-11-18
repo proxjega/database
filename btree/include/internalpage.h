@@ -2,6 +2,13 @@
 
 #include "page.h"
 
+
+/**
+ * @brief Internal page class for internal b+tree nodes. Stores key:pointer.
+ * Stored pointers are page ids.
+ * Pointer points to page, that has keys smaller than key stored with pointer
+ * Special1 stores pointer to last page. Special2 doesn't store anything
+ */
 class InternalPage : public BasicPage {
        friend class Database;
     public:

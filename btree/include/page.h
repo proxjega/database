@@ -90,7 +90,9 @@ class Page {
 
 /**
  * @brief BasicPage class for all the pages in database excluding first one (metapage). Is base class for InternalPage and LeafPage.
- *
+ * Header - page's header with metadata
+ * Offsets - offset array
+ * Special1 and Special2 - 2 reserved Special places
  */
 class BasicPage : public Page{
     friend class Database;

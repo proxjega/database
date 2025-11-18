@@ -7,6 +7,7 @@
 #include <fstream>
 #include <optional>
 #include <stdexcept>
+#include <vector>
 #include "../include/page.h"
 #include "../include/internalpage.h"
 #include "../include/leafpage.h"
@@ -69,22 +70,31 @@ string Database::getName() const {
 fs::path Database::getPath() const {
     return pathToDatabaseFile;
 }
-
+/**
+ * @brief Reads page from a disk.
+ *
+ * @param pageID pageID to read
+ * @return
+ */
 Page Database::ReadPage(uint32_t pageID) const {
     Page page;
 
+    // Open file for reading
     ifstream databaseFile(this->getPath().string(), ios::in | ios::binary);
     if (!databaseFile) {
         throw std::runtime_error("Failed to open database file for reading");
     }
 
+    // Get to page's location
     databaseFile.seekg(pageID * Page::PAGE_SIZE, ios::beg);
     if (!databaseFile.good()) {
         throw std::runtime_error("Seek failed in ReadPage");
     }
 
+    // Read page
     databaseFile.read(page.mData, Page::PAGE_SIZE);
 
+    // Check errors
     if (databaseFile.eof()) {
         throw std::runtime_error("Unexpected EOF while reading page " + std::to_string(pageID));
     }
@@ -98,6 +108,11 @@ Page Database::ReadPage(uint32_t pageID) const {
     return page;
 }
 
+/**
+ * @brief Reads meta page. Almost the same as ReadPage(0)
+ *
+ * @return
+ */
 MetaPage Database::ReadMetaPage() const {
     MetaPage page;
 
@@ -119,22 +134,35 @@ MetaPage Database::ReadMetaPage() const {
     return page;
 }
 
+/**
+ * @brief Writes a BasicPage to a disk.
+ *
+ * @param pageToWrite
+ * @return true on success
+ */
 bool Database::WriteBasicPage(BasicPage &pageToWrite) const {
+    // Open database file
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
         return false;
     }
-
+    // Go to page location
     uint32_t pageID = pageToWrite.Header()->pageID;
     databaseFile.seekp(pageID * Page::PAGE_SIZE, ios::beg);
     if (!databaseFile.good()) {
         return false;
     }
-
+    // Write page buffer
     databaseFile.write(pageToWrite.mData, Page::PAGE_SIZE);
     return !!databaseFile;
 }
 
+/**
+ * @brief Updates meta page. Almost the same as WriteBasicPage
+ *
+ * @param PageToWrite
+ * @return true on success
+ */
 bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
@@ -149,6 +177,12 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
     return !!databaseFile;
 }
 
+/**
+ * @brief Basic Get operation. Gets key:value pair
+ *
+ * @param key
+ * @return leafNodeCell struct (key:value pair) or nullopt (null)
+ */
 std::optional<leafNodeCell> Database::Get(const string& key) const {
     // check keys length
     if (key.length() > MAX_KEY_LENGTH) {
@@ -185,7 +219,13 @@ std::optional<leafNodeCell> Database::Get(const string& key) const {
     cout << "Key not found!\n";
     return std::nullopt;
 }
-
+/**
+ * @brief Basic Set operation. Sets value to a key. Overwrites older key:value pairs
+ *
+ * @param key
+ * @param value
+ * @return true on success
+ */
 bool Database::Set(const string& key, const string& value){
     // check strings length
     if (key.length() > MAX_KEY_LENGTH || value.length() > MAX_VALUE_LENGTH) {
@@ -203,6 +243,7 @@ bool Database::Set(const string& key, const string& value){
         throw std::runtime_error("rootPageID is zero!");
     }
 
+    // Wal log
     this->wal.LogSet(key, value);
 
     //read root page
@@ -219,7 +260,7 @@ bool Database::Set(const string& key, const string& value){
     // Try to insert
     LeafPage leaf(currentPage);
     if (leaf.WillFit(key, value)) {
-        increaseKeyCount = leaf.InsertKeyValue(key, value);
+        increaseKeyCount = leaf.InsertKeyValue(key, value); //true if new key was added
         this->WriteBasicPage(leaf);
     }
     // If doesnt fit - optimize and then try
@@ -236,6 +277,7 @@ bool Database::Set(const string& key, const string& value){
             return true;
         }
     }
+    // update keyCounter
     if (increaseKeyCount) {
         Meta = this->ReadPage(0);
         Meta.Header()->keyNumber++;
@@ -245,6 +287,11 @@ bool Database::Set(const string& key, const string& value){
     return true;
 }
 
+/**
+ * @brief Splits leaf page into 2 pages (b+tree node)
+ *
+ * @param LeafToSplit
+ */
 void Database::SplitLeafPage(LeafPage& LeafToSplit) {
 #ifdef DEBUG
     std::cout << "Splitting leaf page: " << LeafToSplit.Header()->pageID << std::endl;
@@ -270,8 +317,8 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
     // get new children IDs
     MetaPage Meta;
     Meta = this->ReadPage(0);
-    uint32_t Child1ID = LeafToSplit.Header()->pageID;
-    uint32_t Child2ID = Meta.Header()->lastPageID + 1;
+    uint32_t Child1ID = LeafToSplit.Header()->pageID; // Old page ID
+    uint32_t Child2ID = Meta.Header()->lastPageID + 1; // Creating new page
     Meta.Header()->lastPageID++;
 
     // create 2 new children and assign sibling pointers
@@ -326,7 +373,7 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
         Child2.Header()->parentPageID = parentID;
 
         //insert key and pointers
-        Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID); //ADD CHECK FOR FREE SPACE!
+        Parent.InsertKeyAndPointer(keyToMoveToParent, Child1ID);
         Parent.UpdatePointerToTheRightFromKey(keyToMoveToParent, Child2ID);
 
         //write pages
@@ -336,11 +383,16 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
         this->UpdateMetaPage(Meta);
     }
 }
-
+/**
+ * @brief Splits internal page (b+tree node)
+ *
+ * @param InternalToSplit
+ */
 void Database::SplitInternalPage(InternalPage& InternalToSplit){
 #ifdef DEBUG
     std::cout << "Splitting internal page: " << InternalToSplit.Header()->pageID << std::endl;
 #endif
+    // Reread the page to get latest info
     InternalToSplit = this->ReadPage(InternalToSplit.Header()->pageID);
 
     // check which key to move to parent
@@ -372,6 +424,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     Meta.Header()->lastPageID++;
 
     //split internal into 2 internals
+    // fill first child
     for (uint16_t i = 0; i < mid; i++) {
         auto cell = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]);
         Child1.InsertKeyAndPointer(cell.key, cell.childPointer);
@@ -380,7 +433,7 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     uint32_t pointerOfKeyToMoveToParent = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[mid]).childPointer;
     memcpy(Child1.Special1(), &pointerOfKeyToMoveToParent, sizeof(pointerOfKeyToMoveToParent));
 
-    //copy cells to second child and assing special pointer (to the most right child)
+    //fill second child and assing special pointer (to the most right child)
     for (uint16_t i = mid + 1; i < total; i++) {
         auto cell = InternalToSplit.GetKeyAndPointer(InternalToSplit.Offsets()[i]);
         Child2.InsertKeyAndPointer(cell.key, cell.childPointer);
@@ -394,12 +447,13 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
         GrandchildPage.Header()->parentPageID = Child2ID;
         this->WriteBasicPage(GrandchildPage);
     }
+    // update latest grandchild parentpointer
     {
     BasicPage GrandchildPage = this->ReadPage(*Child2.Special1());
     GrandchildPage.Header()->parentPageID = Child2ID;
     this->WriteBasicPage(GrandchildPage);
     }
-     //add key to parent or create parent
+    //add key to parent or create parent
     if (parentID == 0) {
         // get new parent id
         uint32_t newParentID = Meta.Header()->lastPageID + 1;
@@ -442,14 +496,24 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
         this->UpdateMetaPage(Meta);
     }
 }
-
+/**
+ * @brief Gets all keys from Database
+ *
+ * @return
+ */
 vector<string> Database::GetKeys() const {
+    // Read meta page for root page id
     MetaPage Meta;
     Meta = this->ReadPage(0);
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
+
+    // prepare key vector
+    uint32_t keyNum = Meta.Header()->keyNumber;
+    vector<string> keys;
+    keys.reserve(keyNum);
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
@@ -462,17 +526,28 @@ vector<string> Database::GetKeys() const {
         currentPage = this->ReadPage(pageID);
     }
 
-    vector<string> keys;
+    //loop first leaf
     LeafPage leaf(currentPage);
+    for (uint32_t i = 0; i < leaf.Header()->numberOfCells; i++) {
+        keys.push_back(leaf.GetKeyValue(leaf.Offsets()[i]).key);
+    }
+
+    // loop other leaves
     while (*leaf.Special2()!=0) {
+        leaf = ReadPage(*leaf.Special2());
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keys.push_back(leaf.GetKeyValue(leaf.Offsets()[i]).key);
         }
-        leaf = ReadPage(*leaf.Special2());
     }
     return keys;
 }
 
+/**
+ * @brief Get keys with given prefix
+ *
+ * @param prefix
+ * @return
+ */
 vector<string> Database::GetKeys(const string &prefix) const {
     MetaPage Meta;
     Meta = this->ReadPage(0);
@@ -525,7 +600,13 @@ vector<string> Database::GetKeys(const string &prefix) const {
     }
     return keys;
 }
-
+/**
+ * @brief Gets n key value pairs from given key
+ *
+ * @param key
+ * @param n
+ * @return
+ */
 vector<leafNodeCell> Database::GetFF(const string &key, uint32_t n) const {
 
     vector<leafNodeCell> keyValuePairs;
@@ -581,7 +662,13 @@ vector<leafNodeCell> Database::GetFF(const string &key, uint32_t n) const {
     return keyValuePairs;
 }
 
-
+/**
+ * @brief Gets n key value pairs from given key going backwards
+ *
+ * @param key
+ * @param n
+ * @return
+ */
 vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
 
     vector<leafNodeCell> keyValuePairs;
@@ -707,7 +794,7 @@ pagingResult Database::GetFF(uint32_t pageSize, uint32_t pageNum) const{
 }
 
 /**
- * @brief Getff with pageNum and pageSize
+ * @brief Getfb with pageNum and pageSize
  *
  * @param pageSize size of desired page
  * @param pageNum number of page
@@ -774,8 +861,14 @@ pagingResult Database::GetFB(uint32_t pageSize, uint32_t pageNum) const{
     return results;
 }
 
-
+/**
+ * @brief Removes key from database. Lazy deletion
+ *
+ * @param key
+ * @return true on success
+ */
 bool Database::Remove(const string& key) {
+    // validation
     if (key.length() > MAX_KEY_LENGTH) {
         cout << "Key is too long!\n";
         return false;
@@ -790,7 +883,7 @@ bool Database::Remove(const string& key) {
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
-
+    // log into wal
     this->wal.LogDelete(key);
 
     // read root page
@@ -810,6 +903,7 @@ bool Database::Remove(const string& key) {
         return false;
     }
 
+    // remove key if it exists and write pages
     leaf.RemoveKey(key);
     this->WriteBasicPage(leaf);
     Meta.Header()->keyNumber--;
@@ -819,15 +913,24 @@ bool Database::Remove(const string& key) {
     return true;
 }
 
+/**
+ * @brief Optimize database. Needed after many removals
+ *
+ */
 void Database::Optimize(){
+
+    // get old file size
     uintmax_t oldSize = 0;
     try {
         oldSize = std::filesystem::file_size(this->pathToDatabaseFile);
     } catch (const std::filesystem::filesystem_error& e) {
         std::cerr << "Error: " << e.what() << '\n';
     }
+
+    // create new b+tree
     Database OptimizedDb(this->name + "optimized");
 
+    // read meta page
     MetaPage Meta;
     Meta = this->ReadPage(0);
     uint32_t rootPageID = Meta.Header()->rootPageID;
@@ -846,16 +949,22 @@ void Database::Optimize(){
         currentPage = this->ReadPage(pageID);
     }
 
-    vector<string> keys;
+    //loop first leaf and add data to new b+tree
     LeafPage leaf(currentPage);
+    for (uint32_t i = 0; i < leaf.Header()->numberOfCells; i++) {
+        auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
+        OptimizedDb.Set(cell.key, cell.value);
+    }
+
+    // loop other leaves
     while (*leaf.Special2()!=0) {
+        leaf = ReadPage(*leaf.Special2());
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
             OptimizedDb.Set(cell.key, cell.value);
         }
-        leaf = ReadPage(*leaf.Special2());
     }
-
+    // check newsize
     uintmax_t newSize = 0;
     try {
         newSize = std::filesystem::file_size(OptimizedDb.pathToDatabaseFile);
@@ -863,6 +972,7 @@ void Database::Optimize(){
         std::cerr << "Error: " << e.what() << '\n';
     }
 
+    // rename new database file and delete the old one
     try {
         std::filesystem::rename(this->pathToDatabaseFile, this->name + "Old.db");
     } catch (const std::filesystem::filesystem_error& e) {
@@ -915,7 +1025,10 @@ bool Database::RecoverFromWal() {
         return false;
     }
 }
-
+/**
+ * @brief Cout whole database. For debug
+ *
+ */
 void Database::CoutDatabase() const {
     MetaPage Meta = ReadMetaPage();
     Meta.Header()->CoutHeader();
