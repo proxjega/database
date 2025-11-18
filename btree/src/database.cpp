@@ -1,4 +1,6 @@
 #include "../include/database.h"
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -633,6 +635,130 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
         }
     }
     return keyValuePairs;
+}
+
+/**
+ * @brief Getff with pageNum and pageSize
+ *
+ * @param pageSize size of desired page
+ * @param pageNum number of page
+ * @return pagingResult struct (see page.h)
+ */
+pagingResult Database::GetFF(uint32_t pageSize, uint32_t pageNum) const{
+    // get root page id
+    MetaPage Meta;
+    Meta = this->ReadPage(0);
+    uint32_t rootPageID = Meta.Header()->rootPageID;
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
+    // variables
+    uint32_t totalKeys = Meta.Header()->keyNumber;
+    uint32_t totalPages = std::ceil((double)totalKeys/pageSize);
+
+    pagingResult results;
+
+    // validation
+    pageNum = std::min(pageNum, totalPages);
+
+    // Calculate slice indexes
+    uint32_t startIndex = (pageNum - 1) * pageSize;
+    uint32_t endIndex = std::min(startIndex + pageSize, totalKeys);
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to first leaf
+    while (!currentPage.Header()->isLeaf){
+        InternalPage internal(currentPage);
+        uint16_t firstOffset = internal.Offsets()[0];
+        uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
+        currentPage = this->ReadPage(pageID);
+    }
+
+    // loop all leaves and get data
+    LeafPage currentLeaf(currentPage);
+    uint32_t counter = 0;
+    while (*currentLeaf.Special2()!=0) {
+        for (int i = 0; i < currentLeaf.Header()->numberOfCells; i++) {
+            if (counter >= startIndex && counter <= endIndex){
+                results.keyValuePairs.push_back(currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]));
+            }
+            counter++;
+
+        }
+        if (counter > endIndex) {
+            break;
+        }
+        currentLeaf = ReadPage(*currentLeaf.Special2());
+    }
+    results.currentPage = pageNum;
+    results.totalPages = totalPages;
+    results.totalItems = totalKeys;
+    results.hasNextPage = pageNum < totalPages;
+    results.hasPreviousPage = pageNum > 1;
+    return results;
+}
+
+/**
+ * @brief Getff with pageNum and pageSize
+ *
+ * @param pageSize size of desired page
+ * @param pageNum number of page
+ * @return pagingResult struct (see page.h)
+ */
+pagingResult Database::GetFB(uint32_t pageSize, uint32_t pageNum) const{
+    // get root page id
+    MetaPage Meta;
+    Meta = this->ReadPage(0);
+    uint32_t rootPageID = Meta.Header()->rootPageID;
+    if (rootPageID == 0) {
+        throw std::runtime_error("rootPageID is zero!");
+    }
+    // variables
+    uint32_t totalKeys = Meta.Header()->keyNumber;
+    uint32_t totalPages = std::ceil((double)totalKeys/pageSize);
+    pagingResult results;
+
+    // validation
+    pageNum = std::min(pageNum, totalPages);
+
+    // Calculate slice indexes
+    uint32_t startIndex = (pageNum - 1) * pageSize;
+    uint32_t endIndex = std::min(startIndex + pageSize, totalKeys);
+
+    // read root page
+    BasicPage currentPage = this->ReadPage(rootPageID);
+
+    // loop to last leaf
+    while (!currentPage.Header()->isLeaf){
+        InternalPage internal(currentPage);
+        uint32_t pageID = *internal.Special1();
+        currentPage = this->ReadPage(pageID);
+    }
+
+    // loop all leaves and get data
+    LeafPage currentLeaf(currentPage);
+    uint32_t counter = 0;
+    while (*currentLeaf.Special1()!=0) {
+        for (uint32_t i = currentLeaf.Header()->numberOfCells - 1; i >= 0; i--) {
+            if (counter >= startIndex && counter <= endIndex){
+                results.keyValuePairs.push_back(currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]));
+            }
+            counter++;
+
+        }
+        if (counter > endIndex) {
+            break;
+        }
+        currentLeaf = ReadPage(*currentLeaf.Special2());
+    }
+    results.currentPage = pageNum;
+    results.totalPages = totalPages;
+    results.totalItems = totalKeys;
+    results.hasNextPage = pageNum < totalPages;
+    results.hasPreviousPage = pageNum > 1;
+    return results;
 }
 
 
