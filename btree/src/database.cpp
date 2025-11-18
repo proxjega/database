@@ -614,7 +614,7 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
     //get keys from leaf page
     LeafPage leaf(currentPage);
     int16_t index = leaf.FindKeyIndex(key);
-    for (uint16_t i = index; i >= 0; i--) {
+    for (int16_t i = index; i >= 0; i--) {
         auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
         keyValuePairs.push_back(cell);
         counter++;
@@ -676,21 +676,27 @@ pagingResult Database::GetFF(uint32_t pageSize, uint32_t pageNum) const{
         currentPage = this->ReadPage(pageID);
     }
 
-    // loop all leaves and get data
-    LeafPage currentLeaf(currentPage);
+    // loop first leaf
     uint32_t counter = 0;
+    LeafPage currentLeaf(currentPage);
+    for (uint32_t i = 0; i < currentLeaf.Header()->numberOfCells; i++) {
+        if (counter >= startIndex && counter < endIndex){
+            results.keyValuePairs.push_back(currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]));
+        }
+        counter++;
+    }
+    // loop all leaves and get data
     while (*currentLeaf.Special2()!=0) {
-        for (int i = 0; i < currentLeaf.Header()->numberOfCells; i++) {
-            if (counter >= startIndex && counter <= endIndex){
+        currentLeaf = ReadPage(*currentLeaf.Special2());
+        for (uint32_t i = 0; i < currentLeaf.Header()->numberOfCells; i++) {
+            if (counter >= startIndex && counter < endIndex){
                 results.keyValuePairs.push_back(currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]));
             }
             counter++;
-
         }
-        if (counter > endIndex) {
+        if (counter >= endIndex) {
             break;
         }
-        currentLeaf = ReadPage(*currentLeaf.Special2());
     }
     results.currentPage = pageNum;
     results.totalPages = totalPages;
@@ -737,21 +743,28 @@ pagingResult Database::GetFB(uint32_t pageSize, uint32_t pageNum) const{
         currentPage = this->ReadPage(pageID);
     }
 
-    // loop all leaves and get data
-    LeafPage currentLeaf(currentPage);
+    // loop last leaf
     uint32_t counter = 0;
+    LeafPage currentLeaf(currentPage);
+    for (int32_t i = currentLeaf.Header()->numberOfCells - 1; i >= 0; i--) {
+        if (counter >= startIndex && counter < endIndex){
+            results.keyValuePairs.push_back(currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]));
+        }
+        counter++;
+    }
+
+    // loop all leaves and get data
     while (*currentLeaf.Special1()!=0) {
-        for (uint32_t i = currentLeaf.Header()->numberOfCells - 1; i >= 0; i--) {
-            if (counter >= startIndex && counter <= endIndex){
+        currentLeaf = ReadPage(*currentLeaf.Special1());
+        for (int32_t i = currentLeaf.Header()->numberOfCells - 1; i >= 0; i--) {
+            if (counter >= startIndex && counter < endIndex){
                 results.keyValuePairs.push_back(currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]));
             }
             counter++;
-
         }
-        if (counter > endIndex) {
+        if (counter >= endIndex) {
             break;
         }
-        currentLeaf = ReadPage(*currentLeaf.Special2());
     }
     results.currentPage = pageNum;
     results.totalPages = totalPages;
@@ -907,7 +920,6 @@ void Database::CoutDatabase() const {
     MetaPage Meta = ReadMetaPage();
     Meta.Header()->CoutHeader();
     uint32_t pagenum = Meta.Header()->lastPageID;
-    cout << "pagenum = " << pagenum << "\n\n";
     for (uint32_t i = 1; i <= pagenum; i++) {
         BasicPage page = ReadPage(i);
         if (page.Header()->isLeaf) {
