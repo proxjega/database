@@ -14,8 +14,7 @@ using std::memcpy;
 // ---------------- PageHeaders ----------------
 
 void PageHeader::CoutHeader()  {
-    cout << "lastSequenceNumber: " << lastSequenceNumber << "\n"
-         << "isLeaf: " << isLeaf << "\n"
+    cout << "isLeaf: " << isLeaf << "\n"
          << "pageID: " << pageID << "\n"
          << "parentPageID: " << parentPageID << "\n"
          << "numberOfCells: " << numberOfCells << "\n"
@@ -25,8 +24,8 @@ void PageHeader::CoutHeader()  {
 }
 
 void MetaPageHeader::CoutHeader(){
-    cout << "lastSequenceNumber: " << lastSequenceNumber << "\n"
-         << "rootPageID: " << rootPageID << "\n"
+    cout << "rootPageID: " << rootPageID << "\n"
+         << "keyNum: " << keyNumber << "\n"
          << "lastPageID: " << lastPageID << "\n\n";
 }
 
@@ -99,8 +98,12 @@ uint16_t* BasicPage::Offsets() {
  *
  * @return uint32_t*
  */
-uint32_t* BasicPage::Special(){
+uint32_t* BasicPage::Special1(){
     return reinterpret_cast<uint32_t*>(mData + Header()->offsetToStartOfSpecialSpace);
+}
+
+uint32_t* BasicPage::Special2(){
+    return reinterpret_cast<uint32_t*>(mData + Header()->offsetToStartOfSpecialSpace + sizeof(uint32_t));
 }
 
 /**
@@ -149,4 +152,3 @@ MetaPage& MetaPage::operator=(Page& page) {
     }
     return *this;
 }
-
