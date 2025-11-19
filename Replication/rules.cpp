@@ -1,46 +1,58 @@
 #include "common.hpp"
 
+// Statinė informacija apie vieną klasterio mazgą.
 struct NodeInfo {
-    int id;
-    std::string host;   // IP/DNS
-    uint16_t port;      // control port (election/heartbeat)
+    int         id;     // loginis mazgo ID (1..N)
+    std::string host;   // IP arba DNS vardas
+    uint16_t    port;   // valdymo (election/heartbeat) prievadas
 };
 
+// Fiksuotas klasterio narių sąrašas.
 static NodeInfo CLUSTER[] = {
-    {1, "100.93.100.112", 8001}, // node1
-    {2, "100.125.32.90", 8002}, // node2
-    {3, "100.96.196.71", 8003}, // node3
-    {4, "100.99.168.81", 8004}, // node4
+    {1, "100.93.100.112", 8001},  // node1
+    {2, "100.125.32.90",  8002},  // node2
+    {3, "100.96.196.71",  8003},  // node3
+    {4, "100.99.168.81",  8004},  // node4
 };
 
-static constexpr uint16_t CLIENT_PORT   = 7001;   // leader client API
-static constexpr uint16_t REPL_PORT     = 7002;   // leader->followers replication
+// Lyderio atviri prievadai.
+static constexpr uint16_t CLIENT_PORT   = 7001;  // klientų API (SET/GET/DEL)
+static constexpr uint16_t REPL_PORT     = 7002;  // replikacija leader -> followers
 
-// follower read-only ports: 7101, 7102, 7103, ...
+// Follower'io read-only prievadai: 7101, 7102, 7103, ...
 static constexpr uint16_t FOLLOWER_READ_BASE = 7100;
-static inline uint16_t FOLLOWER_READ_PORT(int id){
-    return (uint16_t)(FOLLOWER_READ_BASE + id);
+static inline uint16_t FOLLOWER_READ_PORT(int nodeId) {
+    return static_cast<uint16_t>(FOLLOWER_READ_BASE + nodeId);
 }
 
-static constexpr int HEARTBEAT_INTERVAL_MS = 400;
-static constexpr int HEARTBEAT_TIMEOUT_MS  = 1500;
-static constexpr int ELECTION_TIMEOUT_MS   = 1200;
+// Laiko parametrai (ms).
+static constexpr int HEARTBEAT_INTERVAL_MS = 400;   // kas kiek siųsti heartbeat'ą
+static constexpr int HEARTBEAT_TIMEOUT_MS  = 1500;  // po kiek laikyti leader'į mirusiu
+static constexpr int ELECTION_TIMEOUT_MS   = 1200;  // minimalus laukimas iki rinkimų starto
 
+// Mazgo būsena Raft stiliaus protokole.
 enum class NodeState { FOLLOWER, CANDIDATE, LEADER };
 
+// Bendras lokalaus mazgo klasterio stovis.
 struct ClusterState {
-    std::atomic<NodeState> state{NodeState::FOLLOWER};
-    std::atomic<int> leaderId{0};
-    std::atomic<bool> alive{true};
-    std::mutex cout_mx;
+    std::atomic<NodeState> state{NodeState::FOLLOWER}; // dabartinė rolė
+    std::atomic<int>       leaderId{0};                // žinomas leader'io ID (0 jei nežinomas)
+    std::atomic<bool>      alive{true};                // ar mazgas dar turi veikti
+    std::mutex             cout_mx;                    // sinchronizavimui stdout log'ams
 };
 
-static inline void log_msg(ClusterState& st, int self, const std::string& m){
-    std::lock_guard<std::mutex> g(st.cout_mx);
-    std::cout << "[node " << self << "] " << m << std::endl;
+// Glaustas log'inimo helperis vienam mazgui.
+static inline void log_msg(ClusterState& clusterState,
+                           int selfNodeId,
+                           const std::string& message) {
+    std::lock_guard<std::mutex> lock(clusterState.cout_mx);
+    std::cout << "[node " << selfNodeId << "] " << message << std::endl;
 }
 
-static inline const NodeInfo* getNode(int id){
-    for(auto& n: CLUSTER) if(n.id==id) return &n;
+// Suranda NodeInfo pagal mazgo ID arba grąžina nullptr, jei tokio nėra.
+static inline const NodeInfo* getNode(int nodeId) {
+    for (auto& node : CLUSTER)
+        if (node.id == nodeId)
+            return &node;
     return nullptr;
 }
