@@ -1,175 +1,264 @@
 #include "common.hpp"
 
+// Informacija apie vieną follower'io ryšį leader'yje.
 struct FollowerConn {
-  sock_t s{NET_INVALID};
-  uint64_t acks_upto{0};
-  bool alive{true};
+  sock_t   follower_socket{NET_INVALID};  // TCP jungtis su follower'iu
+  uint64_t acked_upto_seq{0};             // iki kokio seq follower'is jau atsiuntė ACK
+  bool     is_alive{true};                // ar ryšys laikomas gyvu
 };
 
+// Bendras leader'io globalus stovis.
 static std::mutex mtx;
 static std::condition_variable cv;
-static std::unordered_map<std::string,std::string> kv;
-static std::vector<WalEntry> logbuf;
-static std::vector<std::shared_ptr<FollowerConn>> followers;
-static std::atomic<uint64_t> next_seq{1};
-static int REQUIRED_ACKS = 0;
+static std::unordered_map<std::string,std::string> kv;          // aktualus key-value stovis
+static std::vector<WalEntry> logbuf;                            // WAL įrašų istorija atmintyje
+static std::vector<std::shared_ptr<FollowerConn>> followers;    // žinomi follower'iai
+static std::atomic<uint64_t> next_seq{1};                       // sekantis WAL sekos numeris
+static int REQUIRED_ACKS = 0;                                   // kiek follower'ių ACK reikalaujama
 
-static void broadcast_entry(const WalEntry& e){
-  std::string msg;
-  if(e.op==Op::SET)
-    msg = "WRITE "  + std::to_string(e.seq) + " " + e.key + " " + e.value + "\n";
+// Išsiunčia vieną WAL įrašą visiems aktyviems follower'iams.
+static void broadcast_entry(const WalEntry& entry) {
+  std::string message;
+  if (entry.op == Op::SET)
+    message = "WRITE "  + std::to_string(entry.seq) + " " + entry.key + " " + entry.value + "\n";
   else
-    msg = "DELETE " + std::to_string(e.seq) + " " + e.key + "\n";
+    message = "DELETE " + std::to_string(entry.seq) + " " + entry.key + "\n";
 
-  for(auto& f: followers){
-    if(!f->alive) continue;
-    if(!send_all(f->s, msg)) f->alive=false;
+  for (auto& follower : followers) {
+    if (!follower->is_alive) continue;
+    if (!send_all(follower->follower_socket, message))
+      follower->is_alive = false;  // jei siuntimas nepavyko – ryšį laikome mirusiu
   }
 }
 
-static void follower_thread(std::shared_ptr<FollowerConn> f){
-  std::string line;
-  if(!recv_line(f->s,line)){ f->alive=false; return; }
-  auto parts = split(line,' ');
-  if(parts.size()!=2 || parts[0]!="HELLO"){ f->alive=false; return; }
-  uint64_t last = std::stoull(parts[1]);
+// Gija, kuri aptarnauja vieną follower'į:
+// - priima HELLO <last_seq>
+// - persiunčia backlog'ą nuo last_seq
+// - priima ACK <seq> ir atnaujina follower'io acked_upto_seq.
+static void follower_thread(std::shared_ptr<FollowerConn> follower) {
+  std::string hello_line;
+  if (!recv_line(follower->follower_socket, hello_line)) {
+    follower->is_alive = false;
+    return;
+  }
 
-  { 
-    // backlog
-    std::unique_lock<std::mutex> lk(mtx);
-    for(const auto& e: logbuf){
-      if(e.seq>last){
-        std::string msg = (e.op==Op::SET)
-          ? ("WRITE "  + std::to_string(e.seq) + " " + e.key + " " + e.value + "\n")
-          : ("DELETE " + std::to_string(e.seq) + " " + e.key + "\n");
-        if(!send_all(f->s,msg)){ f->alive=false; return; }
+  auto hello_parts = split(hello_line, ' ');
+  if (hello_parts.size() != 2 || hello_parts[0] != "HELLO") {
+    follower->is_alive = false;
+    return;
+  }
+
+  uint64_t last_applied_seq = std::stoull(hello_parts[1]);
+
+  {
+    // Išsiunčiam visus WAL įrašus, kurių seq > follower'io turimo seq.
+    std::unique_lock<std::mutex> lock(mtx);
+    for (const auto& entry : logbuf) {
+      if (entry.seq > last_applied_seq) {
+        std::string message = (entry.op == Op::SET)
+          ? ("WRITE "  + std::to_string(entry.seq) + " " + entry.key + " " + entry.value + "\n")
+          : ("DELETE " + std::to_string(entry.seq) + " " + entry.key + "\n");
+        if (!send_all(follower->follower_socket, message)) {
+          follower->is_alive = false;
+          return;
+        }
       }
     }
   }
 
-  while(f->alive){
-    std::string l;
-    if(!recv_line(f->s,l)){ f->alive=false; break; }
-    auto p = split(l,' ');
-    if(p.size()==2 && p[0]=="ACK"){
-      uint64_t s = std::stoull(p[1]);
-      f->acks_upto = std::max(f->acks_upto, s);
-      cv.notify_all();
+  // Toliau laukiame ACK pranešimų.
+  while (follower->is_alive) {
+    std::string recv_line_str;
+    if (!recv_line(follower->follower_socket, recv_line_str)) {
+      follower->is_alive = false;
+      break;
+    }
+
+    auto tokens = split(recv_line_str, ' ');
+    if (tokens.size() == 2 && tokens[0] == "ACK") {
+      uint64_t ack_seq = std::stoull(tokens[1]);
+      follower->acked_upto_seq = std::max(follower->acked_upto_seq, ack_seq);
+      cv.notify_all();  // pažadinam lyderį, jei jis laukia ACK'ų
     }
   }
 }
 
-static size_t count_acks(uint64_t seq){
-  size_t c=0;
-  for(auto& f: followers) if(f->alive && f->acks_upto>=seq) ++c;
-  return c;
+// Suskaičiuoja, kiek follower'ių yra gyvi ir turi ACK >= seq.
+static size_t count_acks(uint64_t seq) {
+  size_t acked_count = 0;
+  for (auto& follower : followers) {
+    if (follower->is_alive && follower->acked_upto_seq >= seq)
+      ++acked_count;
+  }
+  return acked_count;
 }
 
-static void accept_followers(uint16_t port){
-  sock_t ls = tcp_listen(port);
-  if(ls==NET_INVALID){ std::cerr<<"Follower listen failed\n"; return; }
-  std::cout<<"Leader: listening followers on "<<port<<"\n";
-  while(true){
-    sock_t s = tcp_accept(ls);
-    if(s==NET_INVALID) continue;
-    auto f = std::make_shared<FollowerConn>(); f->s=s;
-    { std::lock_guard<std::mutex> lk(mtx); followers.push_back(f); }
-    std::thread(follower_thread, f).detach();
+// Klausosi naujų follower'ių ir kiekvienam startuoja follower_thread.
+static void accept_followers(uint16_t follower_port) {
+  sock_t listen_socket = tcp_listen(follower_port);
+  if (listen_socket == NET_INVALID) {
+    std::cerr << "Follower listen failed\n";
+    return;
+  }
+
+  std::cout << "Leader: listening followers on " << follower_port << "\n";
+
+  while (true) {
+    sock_t follower_socket = tcp_accept(listen_socket);
+    if (follower_socket == NET_INVALID) continue;
+
+    auto follower_conn = std::make_shared<FollowerConn>();
+    follower_conn->follower_socket = follower_socket;
+
+    {
+      std::lock_guard<std::mutex> lock(mtx);
+      followers.push_back(follower_conn);
+    }
+
+    std::thread(follower_thread, follower_conn).detach();
   }
 }
 
-static void serve_clients(uint16_t port, const std::string& wal_path){
-  sock_t ls = tcp_listen(port);
-  if(ls==NET_INVALID){ std::cerr<<"Client listen failed\n"; return; }
-  std::ofstream wal(wal_path, std::ios::app);
-  std::cout<<"Leader: listening clients on "<<port<<"\n";
+// Aptarnauja klientus (SET/PUT/GET/DEL) ir užtikrina rašymą į follower'ius.
+static void serve_clients(uint16_t client_port, const std::string& wal_path) {
+  sock_t listen_socket = tcp_listen(client_port);
+  if (listen_socket == NET_INVALID) {
+    std::cerr << "Client listen failed\n";
+    return;
+  }
 
-  while(true){
-    sock_t cs = tcp_accept(ls);
-    if(cs==NET_INVALID) continue;
-    std::thread([cs,&wal](){
-      std::string line;
-      while(recv_line(cs,line)){
-        auto p = split(trim(line),' ');
-        if(p.empty()) continue;
+  std::ofstream wal_stream(wal_path, std::ios::app);
+  std::cout << "Leader: listening clients on " << client_port << "\n";
 
-        if( (p[0]=="PUT" || p[0]=="SET") && p.size()>=3 ){
-          WalEntry e;
-          { 
-            // apply
-            std::lock_guard<std::mutex> lk(mtx);
-            e.seq = next_seq++;
-            e.op  = Op::SET;
-            e.key = p[1];
-            e.value = p[2];
-            kv[e.key]=e.value;
-            logbuf.push_back(e);
-            wal_append(wal,e);
-            broadcast_entry(e);
-          }
-          if(REQUIRED_ACKS>0){
-            std::unique_lock<std::mutex> lk(mtx);
-            cv.wait_for(lk, std::chrono::seconds(3), [&]{ return count_acks(e.seq) >= (size_t)REQUIRED_ACKS; });
-          }
-          send_all(cs, "OK " + std::to_string(e.seq) + "\n");
-        }
-        else if(p[0]=="DEL" && p.size()>=2){
-          WalEntry e;
+  while (true) {
+    sock_t client_socket = tcp_accept(listen_socket);
+    if (client_socket == NET_INVALID) continue;
+
+    // Kiekvienam klientui paleidžiame atskirą giją.
+    std::thread([client_socket, &wal_stream]() {
+      std::string request_line;
+
+      while (recv_line(client_socket, request_line)) {
+        auto tokens = split(trim(request_line), ' ');
+        if (tokens.empty()) continue;
+
+        // SET/PUT <key> <value>
+        if ((tokens[0] == "PUT" || tokens[0] == "SET") && tokens.size() >= 3) {
+          WalEntry entry;
+
           {
-            std::lock_guard<std::mutex> lk(mtx);
-            e.seq = next_seq++;
-            e.op  = Op::DEL;
-            e.key = p[1];
-            kv.erase(e.key);
-            logbuf.push_back(e);
-            wal_append(wal,e);
-            broadcast_entry(e);
+            std::lock_guard<std::mutex> lock(mtx);
+
+            entry.seq   = next_seq++;
+            entry.op    = Op::SET;
+            entry.key   = tokens[1];
+            entry.value = tokens[2];
+
+            kv[entry.key] = entry.value;
+            logbuf.push_back(entry);
+            wal_append(wal_stream, entry);
+            broadcast_entry(entry);
           }
-          if(REQUIRED_ACKS>0){
-            std::unique_lock<std::mutex> lk(mtx);
-            cv.wait_for(lk, std::chrono::seconds(3), [&]{ return count_acks(e.seq) >= (size_t)REQUIRED_ACKS; });
+
+          // Jei reikia – laukiame, kol pakankamas kiekis follower'ių patvirtins šį seq.
+          if (REQUIRED_ACKS > 0) {
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait_for(
+              lock,
+              std::chrono::seconds(3),
+              [&] { return count_acks(entry.seq) >= static_cast<size_t>(REQUIRED_ACKS); }
+            );
           }
-          send_all(cs, "OK " + std::to_string(e.seq) + "\n");
+
+          send_all(client_socket, "OK " + std::to_string(entry.seq) + "\n");
         }
-        else if(p[0]=="GET" && p.size()>=2){
-          std::lock_guard<std::mutex> lk(mtx);
-          auto it = kv.find(p[1]);
-          if(it==kv.end()) send_all(cs, "NOT_FOUND\n");
-          else send_all(cs, "VALUE " + it->second + "\n");
+        // DEL <key>
+        else if (tokens[0] == "DEL" && tokens.size() >= 2) {
+          WalEntry entry;
+
+          {
+            std::lock_guard<std::mutex> lock(mtx);
+
+            entry.seq = next_seq++;
+            entry.op  = Op::DEL;
+            entry.key = tokens[1];
+
+            kv.erase(entry.key);
+            logbuf.push_back(entry);
+            wal_append(wal_stream, entry);
+            broadcast_entry(entry);
+          }
+
+          if (REQUIRED_ACKS > 0) {
+            std::unique_lock<std::mutex> lock(mtx);
+            cv.wait_for(
+              lock,
+              std::chrono::seconds(3),
+              [&] { return count_acks(entry.seq) >= static_cast<size_t>(REQUIRED_ACKS); }
+            );
+          }
+
+          send_all(client_socket, "OK " + std::to_string(entry.seq) + "\n");
+        }
+        // GET <key>
+        else if (tokens[0] == "GET" && tokens.size() >= 2) {
+          std::lock_guard<std::mutex> lock(mtx);
+          auto kv_iter = kv.find(tokens[1]);
+
+          if (kv_iter == kv.end())
+            send_all(client_socket, "NOT_FOUND\n");
+          else
+            send_all(client_socket, "VALUE " + kv_iter->second + "\n");
         }
         else {
-          send_all(cs, "ERR usage: SET <k> <v> | GET <k> | DEL <k>\n");
+          send_all(client_socket, "ERR usage: SET <k> <v> | GET <k> | DEL <k>\n");
         }
       }
-      net_close(cs);
+
+      net_close(client_socket);
     }).detach();
   }
 }
 
-int main(int argc, char** argv){
-  if(argc<5){
-    std::cerr<<"Usage: leader <client_port> <follower_port> <wal_path> <required_acks>\n";
+// Inicijuoja leader'į:
+// - perskaito esamą WAL
+// - atstato kv ir logbuf
+// - paleidžia follower ir client serverius.
+int main(int argc, char** argv) {
+  if (argc < 5) {
+    std::cerr << "Usage: leader <client_port> <follower_port> <wal_path> <required_acks>\n";
     return 1;
   }
-  uint16_t client_port   = (uint16_t)std::stoi(argv[1]);
-  uint16_t follower_port = (uint16_t)std::stoi(argv[2]);
-  std::string wal_path   = argv[3];
-  REQUIRED_ACKS          = std::stoi(argv[4]);
 
-  std::vector<WalEntry> prev; wal_load(wal_path, prev);
-  { std::lock_guard<std::mutex> lk(mtx);
-    uint64_t maxseq=0;
-    for(auto& e: prev){
-      if(e.op==Op::SET) kv[e.key]=e.value;
-      else              kv.erase(e.key);
-      logbuf.push_back(e);
-      maxseq = std::max(maxseq, e.seq);
+  uint16_t    client_port   = static_cast<uint16_t>(std::stoi(argv[1]));
+  uint16_t    follower_port = static_cast<uint16_t>(std::stoi(argv[2]));
+  std::string wal_path      = argv[3];
+  REQUIRED_ACKS             = std::stoi(argv[4]);
+
+  // Užkraunam buvusius WAL įrašus ir atstatom vidinę būseną.
+  std::vector<WalEntry> previous_entries;
+  wal_load(wal_path, previous_entries);
+
+  {
+    std::lock_guard<std::mutex> lock(mtx);
+    uint64_t max_seq = 0;
+
+    for (auto& entry : previous_entries) {
+      if (entry.op == Op::SET)
+        kv[entry.key] = entry.value;
+      else
+        kv.erase(entry.key);
+
+      logbuf.push_back(entry);
+      max_seq = std::max(max_seq, entry.seq);
     }
-    next_seq = maxseq+1;
+
+    next_seq = max_seq + 1;
   }
 
-  std::thread t1(accept_followers, follower_port);
+  std::thread follower_accept_thread(accept_followers, follower_port);
   serve_clients(client_port, wal_path);
-  t1.join();
+  follower_accept_thread.join();
+
   return 0;
 }
