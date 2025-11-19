@@ -1,103 +1,237 @@
-#include "common.hpp"
+// client.cpp
+// Klientas, kuris kalbasi su lyderiu (arba followeriais) per TCP.
+// Palaiko SET/GET/DEL ir GETFF/GETFB.
+//
+// GET   – skaito reikšmę iš lyderio (su REDIRECT palaikymu).
+// SET   – rašo reikšmę į lyderį.
+// DEL   – trina raktą per lyderį.
+// GETFF – eina tiesiai į konkretų followerį (forward).
+// GETFB – pirmiausiai bando followerį, jei nieko – kreipiasi į lyderį (fallback).
 
-static bool do_request_follow_redirect(const std::string& host, uint16_t port,
+#include "common.hpp"
+#include <iostream>
+#include <string>
+
+/**
+ * Pasiunčia vieną užklausą į duotą host:port ir, jei gauna REDIRECT atsakymą,
+ * seka redirectą vieną kartą.
+ *
+ * @param initialHost  – pradinis host (dažniausiai lyderio adresas).
+ * @param initialPort  – pradinis portas (dažniausiai lyderio klientų portas) 99% - 7001.
+ * @param payload      – tekstinė užklausa, pvz. "GET user01" (be '\n').
+ *
+ * Elgsena:
+ *  - Prisijungia prie initialHost:initialPort
+ *  - Išsiunčia payload + '\n'
+ *  - Skaito vieną eilutę atsakymo
+ *    - jei eilutė prasideda "REDIRECT host port", atsidaro naujas ryšys ir kartoja užklausą
+ *    - kitu atveju tiesiog išspausdina atsakymo eilutę.
+ *
+ * Grąžina true, jei kažkoks atsakymas sėkmingai gautas ir atspausdintas (OK <skaicius>),
+ * false – jei nepavyko prisijungti ar gauti atsakymo. (ERR_CONNECT)
+ */
+static bool do_request_follow_redirect(const std::string& initialHost,
+                                       uint16_t initialPort,
                                        const std::string& payload) {
-  // 1st try
-  sock_t s = tcp_connect(host, port);
-  if (s == NET_INVALID) { std::cerr << "ERR_CONNECT\n"; return false; }
-  send_all(s, payload + "\n");
-  std::string line;
-  if (!recv_line(s, line)) { net_close(s); std::cerr << "ERR_NO_REPLY\n"; return false; }
-  auto p = split(trim(line), ' ');
-  if (!p.empty() && p[0] == "REDIRECT" && p.size() >= 3) {
-    // follow redirect once
-    std::string h = p[1];
-    uint16_t newPort = (uint16_t)std::stoi(p[2]);
-    net_close(s);
-    sock_t s2 = tcp_connect(h, newPort);
-    if (s2 == NET_INVALID) { std::cerr << "ERR_CONNECT\n"; return false; }
-    send_all(s2, payload + "\n");
-    std::string out2;
-    if (!recv_line(s2, out2)) { net_close(s2); std::cerr << "ERR_NO_REPLY\n"; return false; }
-    std::cout << out2 << "\n";
-    net_close(s2);
+  // 1-as bandymas – jungiamės prie pradinių host/port
+  sock_t socketMain = tcp_connect(initialHost, initialPort);
+  if (socketMain == NET_INVALID) {
+    std::cerr << "ERR_CONNECT\n";
+    return false;
+  }
+
+  // Išsiunčiam komandą (pvz. "GET key\n" ar "SET key value\n")
+  send_all(socketMain, payload + "\n");
+
+  // Laukiam vienos atsakymo eilutės
+  std::string responseLine;
+  if (!recv_line(socketMain, responseLine)) {
+    net_close(socketMain);
+    std::cerr << "ERR_NO_REPLY\n";
+    return false;
+  }
+
+  // Suskaidom atsakymą pagal tarpą, kad pamatytume ar tai REDIRECT
+  auto responseParts = split(trim(responseLine), ' ');
+
+  // Patikrinam: jei pirmas žodis "REDIRECT" ir turim bent 3 dalis –
+  // [0]: "REDIRECT", [1]: naujasHost, [2]: naujasPort
+  if (!responseParts.empty() &&
+      responseParts[0] == "REDIRECT" &&
+      responseParts.size() >= 3) {
+
+    // Vieną kartą sekam redirectą
+    std::string redirectHost = responseParts[1];
+    uint16_t redirectPort = static_cast<uint16_t>(std::stoi(responseParts[2]));
+
+    // Uždarom seną socketą
+    net_close(socketMain);
+
+    // Bandome jungtis į naują redirect adresą
+    sock_t socketRedirect = tcp_connect(redirectHost, redirectPort);
+    if (socketRedirect == NET_INVALID) {
+      std::cerr << "ERR_CONNECT\n";
+      return false;
+    }
+
+    // Pakartojame tą pačią užklausą naujam serveriui
+    send_all(socketRedirect, payload + "\n");
+
+    std::string redirectedResponse;
+    if (!recv_line(socketRedirect, redirectedResponse)) {
+      net_close(socketRedirect);
+      std::cerr << "ERR_NO_REPLY\n";
+      return false;
+    }
+
+    // Išspausdinam, ką gavom po redirect
+    std::cout << redirectedResponse << "\n";
+    net_close(socketRedirect);
     return true;
   } else {
-    std::cout << line << "\n";
-    net_close(s);
+    // Jokio redirect – tiesiog išspausdinam atsakymą iš pirmo serverio
+    std::cout << responseLine << "\n";
+    net_close(socketMain);
     return true;
   }
 }
 
-static bool split_host_port(const std::string& hp, std::string& h, uint16_t& p){
-  auto pos = hp.find(':'); if(pos==std::string::npos) return false;
-  h = hp.substr(0,pos); p = (uint16_t)std::stoi(hp.substr(pos+1));
+/**
+ * Pagalbinė funkcija, kuri iš host:port tipo eilutės išskiria host ir port.
+ *
+ * Pvz. "100.125.32.90:7101" -> hostOut = "100.125.32.90", portOut = 7101
+ *
+ * @param hostPortStr  – įvestis "host:port".
+ * @param hostOut      – išvestinis host pavadinimas / IP.
+ * @param portOut      – išvestinis portas.
+ *
+ * @return true, jei pavyko išskaidyti; false, jei nerado ':' simbolio.
+ */
+static bool split_host_port(const std::string& hostPortStr,
+                            std::string& hostOut,
+                            uint16_t& portOut) {
+  auto colonPos = hostPortStr.find(':');
+  if (colonPos == std::string::npos) return false;
+
+  hostOut = hostPortStr.substr(0, colonPos);
+  portOut = static_cast<uint16_t>(std::stoi(hostPortStr.substr(colonPos + 1)));
   return true;
 }
 
-int main(int argc, char** argv){
-  if(argc < 4){
-    std::cerr<<"Usage:\n"
-             <<"  client <leader_host> <leader_client_port> GET <k>\n"
-             <<"  client <leader_host> <leader_client_port> SET <k> <v>\n"
-             <<"  client <leader_host> <leader_client_port> DEL <k>\n"
-             <<"  client <leader_host> <leader_client_port> GETFF <k> <follower_host:port>\n"
-             <<"  client <leader_host> <leader_client_port> GETFB <k> <follower_host:port>\n";
+int main(int argc, char** argv) {
+  // Minimalus argumentų skaičius:
+  if (argc < 4) {
+    std::cerr << "Usage:\n"
+              << "  client <leader_host> <leader_client_port> GET <k>\n"
+              << "  client <leader_host> <leader_client_port> SET <k> <v>\n"
+              << "  client <leader_host> <leader_client_port> DEL <k>\n"
+              << "  client <leader_host> <leader_client_port> GETFF <k> <follower_host:port>\n"
+              << "  client <leader_host> <leader_client_port> GETFB <k> <follower_host:port>\n";
     return 1;
   }
-  std::string leader_host = argv[1];
-  uint16_t leader_port    = (uint16_t)std::stoi(argv[2]);
-  std::string cmd = argv[3];
 
-  if(cmd=="GET" && argc>=5){
-    return do_request_follow_redirect(leader_host, leader_port,
-                                      "GET " + std::string(argv[4])) ? 0 : 1;
+  // Lyderio adresas (čia tas, į kurį visada kreipiamės SET/DEL ir baziniam GET)
+  std::string leaderHost = argv[1];
+  uint16_t leaderPort = static_cast<uint16_t>(std::stoi(argv[2]));
+  std::string command = argv[3];
+
+  // Paprastas GET – visada per lyderį (su REDIRECT palaikymu)
+  if (command == "GET" && argc >= 5) {
+    return do_request_follow_redirect(
+             leaderHost, leaderPort,
+             "GET " + std::string(argv[4])
+           ) ? 0 : 1;
   }
-  else if((cmd=="SET" || cmd=="PUT") && argc>=6){
-    return do_request_follow_redirect(leader_host, leader_port,
-                                      "SET " + std::string(argv[4]) + " " + std::string(argv[5])) ? 0 : 1;
+  // SET / PUT – rašo į lyderį (užklausos forma: "SET key value")
+  else if ((command == "SET" || command == "PUT") && argc >= 6) {
+    return do_request_follow_redirect(
+             leaderHost, leaderPort,
+             "SET " + std::string(argv[4]) + " " + std::string(argv[5])
+           ) ? 0 : 1;
   }
-  else if(cmd=="DEL" && argc>=5){
-    return do_request_follow_redirect(leader_host, leader_port,
-                                      "DEL " + std::string(argv[4])) ? 0 : 1;
+  // DEL – trina key per lyderį
+  else if (command == "DEL" && argc >= 5) {
+    return do_request_follow_redirect(
+             leaderHost, leaderPort,
+             "DEL " + std::string(argv[4])
+           ) ? 0 : 1;
   }
-  else if(cmd=="GETFF" && argc>=6){
-    std::string h; uint16_t p;
-    if(!split_host_port(argv[5], h, p)){ std::cerr<<"bad follower host:port\n"; return 1; }
-    return do_request_follow_redirect(h, p, "GET " + std::string(argv[4])) ? 0 : 1;
+  // GETFF – "forward": eik tiesiai į nurodytą follower host:port
+  else if (command == "GETFF" && argc >= 6) {
+    std::string followerHost;
+    uint16_t followerPort;
+    if (!split_host_port(argv[5], followerHost, followerPort)) {
+      std::cerr << "bad follower host:port\n";
+      return 1;
+    }
+    return do_request_follow_redirect(
+             followerHost, followerPort,
+             "GET " + std::string(argv[4])
+           ) ? 0 : 1;
   }
-  else if(cmd=="GETFB" && argc>=6){
-    std::string h; uint16_t p;
-    if(!split_host_port(argv[5], h, p)){ std::cerr<<"bad follower host:port\n"; return 1; }
-    // try follower first, if NOT_FOUND or error -> retry leader
-    sock_t s = tcp_connect(h, p);
-    if (s != NET_INVALID) {
-      send_all(s, "GET " + std::string(argv[4]) + "\n");
-      std::string line;
-      if (recv_line(s, line)) {
-        net_close(s);
-        if (line=="NOT_FOUND") {
-          return do_request_follow_redirect(leader_host, leader_port,
-                                            "GET " + std::string(argv[4])) ? 0 : 1;
-        } else if (line.rfind("REDIRECT ",0)==0) {
-          // follow follower's redirect just in case
-          auto parts = split(trim(line),' ');
-          if (parts.size()>=3) {
-            std::string nh = parts[1]; uint16_t np=(uint16_t)std::stoi(parts[2]);
-            return do_request_follow_redirect(nh, np, "GET " + std::string(argv[4])) ? 0 : 1;
+  // GETFB – "fallback":
+  //   1) Pirma bandom gauti iš followerio
+  //   2) Jei followeris grąžina NOT_FOUND arba nepavyksta gauti atsakymo,
+  //      tada kreipiamės į lyderį.
+  else if (command == "GETFB" && argc >= 6) {
+    std::string followerHost;
+    uint16_t followerPort;
+    if (!split_host_port(argv[5], followerHost, followerPort)) {
+      std::cerr << "bad follower host:port\n";
+      return 1;
+    }
+
+    // 1) Bandome jungtis prie followerio
+    sock_t followerSocket = tcp_connect(followerHost, followerPort);
+    if (followerSocket != NET_INVALID) {
+      // Paprastas GET į followerį
+      send_all(followerSocket, "GET " + std::string(argv[4]) + "\n");
+
+      std::string followerReply;
+      if (recv_line(followerSocket, followerReply)) {
+        net_close(followerSocket);
+
+        // Jei followeris sako "NOT_FOUND" -> bandysim lyderį
+        if (followerReply == "NOT_FOUND") {
+          return do_request_follow_redirect(
+                   leaderHost, leaderPort,
+                   "GET " + std::string(argv[4])
+                 ) ? 0 : 1;
+        }
+        // Jei followeris grąžina REDIRECT – saugumo sumetimais tą redirectą sekam
+        else if (followerReply.rfind("REDIRECT ", 0) == 0) {
+          auto parts = split(trim(followerReply), ' ');
+          if (parts.size() >= 3) {
+            std::string redirectHost = parts[1];
+            uint16_t redirectPort =
+              static_cast<uint16_t>(std::stoi(parts[2]));
+
+            return do_request_follow_redirect(
+                     redirectHost, redirectPort,
+                     "GET " + std::string(argv[4])
+                   ) ? 0 : 1;
           }
-        } else {
-          std::cout<<line<<"\n"; return 0;
+        }
+        // Bet koks kitas atsakymas – laikom sėkme ir tiesiog išspausdinam
+        else {
+          std::cout << followerReply << "\n";
+          return 0;
         }
       } else {
-        net_close(s);
+        // Nepavyko perskaityt atsakymo iš followerio
+        net_close(followerSocket);
       }
     }
-    // fallback to leader on connect/read error
-    return do_request_follow_redirect(leader_host, leader_port,
-                                      "GET " + std::string(argv[4])) ? 0 : 1;
+
+    // 2) Fallback: jei nepavyko prisijungti arba gauti tinkamo atsakymo iš followerio,
+    //    bandome tą patį GET per lyderį
+    return do_request_follow_redirect(
+             leaderHost, leaderPort,
+             "GET " + std::string(argv[4])
+           ) ? 0 : 1;
   }
 
-  std::cerr<<"Bad args. See usage above.\n";
+  // Jei komanda neatitiko nė vieno iš aukščiau – blogi argumentai
+  std::cerr << "Bad args. See usage above.\n";
   return 1;
 }
