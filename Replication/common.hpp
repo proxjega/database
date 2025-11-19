@@ -18,25 +18,33 @@
 #include <algorithm>
 
 #ifdef _WIN32
+  // Windows socket API
   #include <winsock2.h>
   #include <ws2tcpip.h>
   #pragma comment(lib, "Ws2_32.lib")
   using sock_t = SOCKET;
 
+  // Vienkartinė (lazy) Winsock inicializacija
   static inline bool net_init_once() {
     static bool inited = false;
-    static std::mutex m;
-    std::lock_guard<std::mutex> g(m);
+    static std::mutex initMutex;
+    std::lock_guard<std::mutex> guard(initMutex);
     if (inited) return true;
-    WSADATA w{};
-    int r = WSAStartup(MAKEWORD(2,2), &w);
-    inited = (r == 0);
+
+    WSADATA wsaData{};
+    int result = WSAStartup(MAKEWORD(2,2), &wsaData);
+    inited = (result == 0);
     return inited;
   }
-  static inline void net_close(sock_t s) { closesocket(s); }
+
+  // Bendras socket uždarymo alias
+  static inline void net_close(sock_t socketHandle) { closesocket(socketHandle); }
+
+  // „neteisingas“ / nepavykęs socket handle
   static constexpr sock_t NET_INVALID = INVALID_SOCKET;
 
 #else
+  // POSIX / Linux socket API
   #include <sys/types.h>
   #include <sys/socket.h>
   #include <netinet/in.h>
@@ -45,130 +53,159 @@
   #include <unistd.h>
   using sock_t = int;
 
+  // Linux atveju atskiros inicializacijos nereikia
   static inline bool net_init_once() { return true; }
-  static inline void net_close(sock_t s) { close(s); }
+
+  // Bendras socket uždarymo alias
+  static inline void net_close(sock_t socketHandle) { close(socketHandle); }
+
+  // „neteisingas“ / nepavykęs socket handle
   static constexpr sock_t NET_INVALID = -1;
 #endif
 
 /* ===================== TCP helper functions ===================== */
 
+// Sukuria serverio socket'ą, kuris klausosi nurodyto porto
 static inline sock_t tcp_listen(uint16_t port, int backlog = 16) {
   net_init_once();
 
-  sock_t s = socket(AF_INET, SOCK_STREAM, 0);
-  if (s == NET_INVALID) return NET_INVALID;
+  // Sukuriam TCP (SOCK_STREAM) socket'ą
+  sock_t listenSock = socket(AF_INET, SOCK_STREAM, 0);
+  if (listenSock == NET_INVALID) return NET_INVALID;
 
-  // allow fast rebind after restarts
-  int yes = 1;
+  // Leidžia greitai rebind'inti portą po restartų (nenorim „Address already in use“)
+  int reuseFlag = 1;
 #ifdef _WIN32
-  setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+  setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseFlag, sizeof(reuseFlag));
   #ifdef SO_REUSEPORT
-    setsockopt(s, SOL_SOCKET, SO_REUSEPORT, (const char*)&yes, sizeof(yes));
+    setsockopt(listenSock, SOL_SOCKET, SO_REUSEPORT, (const char*)&reuseFlag, sizeof(reuseFlag));
   #endif
 #else
-  setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+  setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, sizeof(reuseFlag));
   #ifdef SO_REUSEPORT
-    setsockopt(s, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes));
+    setsockopt(listenSock, SOL_SOCKET, SO_REUSEPORT, &reuseFlag, sizeof(reuseFlag));
   #endif
 #endif
 
-  sockaddr_in addr{};
-  addr.sin_family      = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_ANY);   // bind to 0.0.0.0
-  addr.sin_port        = htons(port);
+  // Bind'inam prie 0.0.0.0:<port> – priimam ryšius iš visų interfeisų
+  sockaddr_in address{};
+  address.sin_family      = AF_INET;
+  address.sin_addr.s_addr = htonl(INADDR_ANY);
+  address.sin_port        = htons(port);
 
-  if (bind(s, (sockaddr*)&addr, sizeof(addr)) < 0) {
+  if (bind(listenSock, (sockaddr*)&address, sizeof(address)) < 0) {
     perror("bind");
-    net_close(s);
+    net_close(listenSock);
     return NET_INVALID;
   }
-  if (listen(s, backlog) < 0) {
+
+  // Pradedam klausytis
+  if (listen(listenSock, backlog) < 0) {
     perror("listen");
-    net_close(s);
+    net_close(listenSock);
     return NET_INVALID;
   }
-  return s;
+  return listenSock;
 }
 
-static inline sock_t tcp_accept(sock_t ls) {
-  sockaddr_in caddr{};
+// Priima vieną kliento prisijungimą (blokuoja iki connect)
+static inline sock_t tcp_accept(sock_t listenSock) {
+  sockaddr_in clientAddress{};
 #ifdef _WIN32
-  int len = (int)sizeof(caddr);
+  int addrLen = (int)sizeof(clientAddress);
 #else
-  socklen_t len = sizeof(caddr);
+  socklen_t addrLen = sizeof(clientAddress);
 #endif
-  sock_t cs = accept(ls, (sockaddr*)&caddr, &len);
-  return cs;
+  sock_t clientSock = accept(listenSock, (sockaddr*)&clientAddress, &addrLen);
+  return clientSock;
 }
 
+// Prisijungia prie <host>:<port> kaip klientas
 static inline sock_t tcp_connect(const std::string& host, uint16_t port) {
   net_init_once();
 
-  addrinfo hints{}, *res = nullptr;
+  addrinfo hints{}, *result = nullptr;
   hints.ai_family   = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
 
-  std::string ps = std::to_string(port);
-  if (getaddrinfo(host.c_str(), ps.c_str(), &hints, &res) != 0) {
+  std::string portStr = std::to_string(port);
+
+  // DNS/host rezoliucija
+  if (getaddrinfo(host.c_str(), portStr.c_str(), &hints, &result) != 0) {
     return NET_INVALID;
   }
 
-  sock_t s = NET_INVALID;
-  for (addrinfo* rp = res; rp != nullptr; rp = rp->ai_next) {
-    s = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (s == NET_INVALID) continue;
+  sock_t clientSock = NET_INVALID;
+
+  // Bandom per visus gautus adresus
+  for (addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
+    clientSock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+    if (clientSock == NET_INVALID) continue;
+
 #ifdef _WIN32
-    if (connect(s, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+    if (connect(clientSock, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
 #else
-    if (connect(s, rp->ai_addr, rp->ai_addrlen) == 0) break;
+    if (connect(clientSock, rp->ai_addr, rp->ai_addrlen) == 0) break;
 #endif
-    net_close(s);
-    s = NET_INVALID;
+    // jei nepavyko – uždarom ir bandome kitą
+    net_close(clientSock);
+    clientSock = NET_INVALID;
   }
-  freeaddrinfo(res);
-  return s;
+
+  freeaddrinfo(result);
+  return clientSock;
 }
 
-static inline bool send_all(sock_t s, const std::string& data) {
-  const char* buf = data.data();
-  size_t total = 0, len = data.size();
-  while (total < len) {
+// Išsiunčia visą string'ą (kol išsiųsta visi baitai arba klaida)
+static inline bool send_all(sock_t socketHandle, const std::string& data) {
+  const char* buffer = data.data();
+  size_t totalSent   = 0;
+  size_t dataLen     = data.size();
+
+  while (totalSent < dataLen) {
 #ifdef _WIN32
-    int sent = send(s, buf + total, (int)(len - total), 0);
+    int sent = send(socketHandle, buffer + totalSent, (int)(dataLen - totalSent), 0);
 #else
-    ssize_t sent = send(s, buf + total, len - total, 0);
+    ssize_t sent = send(socketHandle, buffer + totalSent, dataLen - totalSent, 0);
 #endif
-    if (sent <= 0) return false;
-    total += (size_t)sent;
+    if (sent <= 0) return false; // klaida arba sujungimas nutrūko
+    totalSent += (size_t)sent;
   }
   return true;
 }
 
-static inline bool recv_line(sock_t s, std::string& out) {
+// Perskaito vieną eilutę iki '\n' (grąžina false, jei ryšys uždarytas / klaida)
+static inline bool recv_line(sock_t socketHandle, std::string& out) {
   out.clear();
-  char c;
+  char ch;
   while (true) {
 #ifdef _WIN32
-    int r = recv(s, &c, 1, 0);
+    int received = recv(socketHandle, &ch, 1, 0);
 #else
-    ssize_t r = recv(s, &c, 1, 0);
+    ssize_t received = recv(socketHandle, &ch, 1, 0);
 #endif
-    if (r <= 0) return false;
-    if (c == '\n') break;
-    if (c != '\r') out.push_back(c);
+    if (received <= 0) return false; // nutrūko ryšys arba klaida
+
+    if (ch == '\n') break;           // baigėsi eilutė
+    if (ch != '\r') out.push_back(ch); // ignoruojam '\r' (Windows CRLF)
   }
   return true;
 }
 
-// Utility helpers
+/* ===================== Utility helpers (string) ===================== */
 
+// Nukerpa whitespace pradžioje ir pabaigoje
 static inline std::string trim(const std::string& s) {
-  size_t b = 0, e = s.size();
-  while (b < e && std::isspace((unsigned char)s[b])) ++b;
-  while (e > b && std::isspace((unsigned char)s[e - 1])) --e;
-  return s.substr(b, e - b);
+  size_t begin = 0;
+  size_t end   = s.size();
+
+  while (begin < end && std::isspace((unsigned char)s[begin])) ++begin;
+  while (end > begin && std::isspace((unsigned char)s[end - 1])) --end;
+
+  return s.substr(begin, end - begin);
 }
 
+// Padalina string'ą per nurodytą simbolį (delim)
 static inline std::vector<std::string> split(const std::string& s, char delim) {
   std::vector<std::string> parts;
   std::stringstream ss(s);
@@ -177,41 +214,62 @@ static inline std::vector<std::string> split(const std::string& s, char delim) {
   return parts;
 }
 
-// WAL definitions & I/O 
+/* ===================== WAL definitions & I/O ===================== */
 
+// Operacijos tipas: SET arba DEL
 enum class Op : uint8_t { SET = 1, DEL = 2 };
 
+// Vienas WAL įrašas
 struct WalEntry {
-  uint64_t seq{};
-  Op op{Op::SET};
-  std::string key, value;   // value used only for SET
+  uint64_t seq{};           // sekos numeris (didėjantis)
+  Op op{Op::SET};           // operacijos tipas (SET/DEL)
+  std::string key, value;   // key ir value; value naudojamas tik SET operacijai
 };
 
-static inline std::string op_to_str(Op o) { return (o == Op::SET) ? "SET" : "DEL"; }
-static inline Op          str_to_op(const std::string& s) { return (s == "DEL") ? Op::DEL : Op::SET; }
-
-static inline void wal_append(std::ofstream& wal, const WalEntry& e) {
-  wal << e.seq << '\t' << op_to_str(e.op) << '\t' << e.key << '\t' << e.value << '\n';
-  wal.flush();
+// Konvertuoja enum -> string (rašymui į failą)
+static inline std::string op_to_str(Op operation) {
+  return (operation == Op::SET) ? "SET" : "DEL";
 }
 
-static inline bool wal_load(const std::string& path, std::vector<WalEntry>& out) {
+// Konvertuoja string -> enum (skaitymui iš failo)
+static inline Op str_to_op(const std::string& opStr) {
+  return (opStr == "DEL") ? Op::DEL : Op::SET;
+}
+
+// Prideda vieną įrašą į WAL failą (tekstu, viena eilute)
+static inline void wal_append(std::ofstream& walStream, const WalEntry& entry) {
+  // Formatas: seq \t OP \t key \t value\n
+  walStream << entry.seq << '\t'
+            << op_to_str(entry.op) << '\t'
+            << entry.key << '\t'
+            << entry.value << '\n';
+
+  walStream.flush(); // užtikrinam, kad iškart nueitų į diską (durability)
+}
+
+// Perskaito visą WAL failą į atmintį (vektorių)
+static inline bool wal_load(const std::string& path, std::vector<WalEntry>& outEntries) {
   std::ifstream in(path);
-  if (!in.good()) return false;
+  if (!in.good()) return false;   // jei failo nėra – laikom, kad nėra ankstesnių įrašų
 
   std::string line;
   while (std::getline(in, line)) {
     if (line.empty()) continue;
-    std::istringstream is(line);
-    std::string seqs, ops;
-    WalEntry e;
-    if (!std::getline(is, seqs, '\t')) continue;
-    if (!std::getline(is, ops,  '\t')) continue;
-    std::getline(is, e.key,   '\t');
-    std::getline(is, e.value);
-    e.seq = std::stoull(seqs);
-    e.op  = str_to_op(ops);
-    out.push_back(std::move(e));
+
+    std::istringstream lineStream(line);
+    std::string seqStr, opStr;
+    WalEntry entry;
+
+    // seq ir op yra atskirti tab'ais
+    if (!std::getline(lineStream, seqStr, '\t')) continue;
+    if (!std::getline(lineStream, opStr,  '\t')) continue;
+    std::getline(lineStream, entry.key,   '\t');
+    std::getline(lineStream, entry.value);
+
+    entry.seq = std::stoull(seqStr);   // sekos numeris
+    entry.op  = str_to_op(opStr);      // SET/DEL
+
+    outEntries.push_back(std::move(entry));
   }
   return true;
 }
