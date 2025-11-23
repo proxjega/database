@@ -233,8 +233,6 @@ bool Database::Set(const string& key, const string& value){
         return false;
     }
 
-    // this->wal.LogSet(key, value); nzn ar pries patikrinant duombazes struktura ar po.
-
     // get root page id
     MetaPage Meta;
     Meta = this->ReadPage(0);
@@ -242,9 +240,6 @@ bool Database::Set(const string& key, const string& value){
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
-
-    // Wal log
-    this->wal.LogSet(key, value);
 
     //read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
@@ -874,8 +869,6 @@ bool Database::Remove(const string& key) {
         return false;
     }
 
-    // this->wal.LogDelete(key); nzn ar pries patikrinant duombazes struktura ar po.
-
     // get root page id
     MetaPage Meta;
     Meta = this->ReadPage(0);
@@ -883,8 +876,6 @@ bool Database::Remove(const string& key) {
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
-    // log into wal
-    this->wal.LogDelete(key);
 
     // read root page
     BasicPage currentPage = this->ReadPage(rootPageID);
@@ -996,35 +987,69 @@ void Database::Optimize(){
 bool Database::RecoverFromWal() {
     auto records = this->wal.ReadAll();
     if (records.empty()) {
-        std::cout << "RecoverFromWal: No WAL records to apply.\n";
         return true;
     }
 
-    try {
-        std::cout << "RecoverFromWal: Applying " << records.size() << " records...\n";
+    bool allSuccess = true; // Tik tam, kad patikrinti ar visi įrašai iš WAL sėkmingai įsirašė į B+ medį.
 
-        for (const auto &record : records) {
-            if (record.operation == WalOperation::SET) {
-                if(!this->Set(record.key, record.value)) {
-                    std::cerr << "RecoverFromWal: Failed to SET key: ["
-                                  << record.key << "] with value: ["
-                                  << record.value << "]\n";
-                }
-            } else if (record.operation == WalOperation::DELETE) {
-                if(!this->Remove(record.key)) {
-                    std::cerr << "RecoverFromWal: Failed to DELETE key: ["
-                                  << record.key << "]\n";
-                }
+    std::cout << "RecoverFromWal: Applying " << records.size() << " records...\n";
+
+    for (const auto &record : records) {
+        if (record.operation == WalOperation::SET) {
+            if(!this->Set(record.key, record.value)) {
+                std::cerr << "Failed to recover key: " << record.key << "\n";
+                allSuccess = false; // Pažymime, jog nepavyko įrašas.
+            }
+        } else if (record.operation == WalOperation::DELETE) {
+            if(!this->Remove(record.key)) {
+                std::cerr << "Failed to recover delete: " << record.key << "\n";
+                allSuccess = false; // Pažymime, jog nepavyko įrašas.
             }
         }
+    }
 
+    // Išvalome visus WAL, jeigu atsistatymo metu visi įrašai sėkmingai buvo įsirašyti į B+ medį.
+    if (allSuccess) {
         this->wal.ClearAll();
         return true;
-    } catch (const std::exception &e) {
-        std::cerr << "Recovery failed: " << e.what() << "\n";
-        return false;
     }
+
+    std::cerr << "CRITICAL: Recovery partially failed. WAL not cleared.\n";
+    return false;
+
 }
+
+/**
+ * @brief Wrapper metodas, kuris iškviečia vidinio WAL LogSet() metodą.
+ * @param key. Raktas.
+ * @param value. Rakto reikšmė.
+*/
+bool Database::ExecuteLogSet(const string &key, const string &value) {
+    bool logSuccess = this->wal.LogSet(key, value);
+
+    if (!logSuccess) {
+        std::cerr << "Critical Error: Failed to write to WAL. Operation aborted.\n";
+        return false; // Jei WAL įrašymas nepavyko, tai nerašome ir į B+ medį.
+    }
+
+    return this->Set(key, value);
+}
+
+/**
+ * @brief Wrapper metodas, kuris iškviečia vidinio WAL LogDelete() metodą.
+ * @param key. Raktas, kuris trinamas.
+*/
+bool Database::ExecuteLogDelete(const string &key) {
+    bool logSuccess = this->wal.LogDelete(key);
+
+    if (!logSuccess) {
+        std::cerr << "Critical Error: Failed to write to WAL.\n";
+        return false; // Jei WAL įrašymas nepavyko, tai nerašome ir į B+ medį.
+    }
+
+    return this->Remove(key);
+}
+
 /**
  * @brief Cout whole database. For debug
  *

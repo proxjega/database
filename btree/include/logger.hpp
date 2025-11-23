@@ -9,8 +9,15 @@ using std::string;
 using std::vector;
 namespace fs = std::filesystem;
 
+/**
+ * Enumerator for WAL operations (LOG arba DELETE)
+*/
 enum class WalOperation : uint8_t { SET, DELETE };
 
+/**
+ * @brief Struct for WAL record.
+ *
+*/
 struct WalRecord {
     uint64_t lsn{1};
     WalOperation operation{WalOperation::SET};
@@ -21,6 +28,10 @@ struct WalRecord {
     WalRecord(uint64_t seqNum, WalOperation operation, string key, string value = "");
 };
 
+/**
+ * @brief Struct for WAL.
+ *
+ */
 class WAL {
 private:
     string name;
@@ -43,7 +54,7 @@ private:
     static WalRecord ParseWalRecord(const string &line);
 
 public:
-    static constexpr size_t DEFAULT_SEGMENT_SIZE = 5UL * 1024UL * 1024UL;
+    static constexpr size_t DEFAULT_SEGMENT_SIZE = 16UL * 1024UL * 1024UL;
 
     explicit WAL(const string &databaseName, size_t MaxSegmentSizeBytes = DEFAULT_SEGMENT_SIZE); // Default 16MB. Same as Postgres
 
