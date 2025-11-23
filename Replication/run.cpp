@@ -6,6 +6,8 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <random>
+#include <stdexcept>
 
 #ifdef _WIN32
   #include <windows.h>
@@ -15,56 +17,125 @@
   #include <sys/wait.h>
 #endif
 
-// --------------- Globals ---------------
-static ClusterState G;
-static int SELF_ID = 0;
-static NodeInfo SELF;
+// -------- Logging helpers (naudojam per log_msg) --------
 
-static std::atomic<long long> g_last_hb_ms{0};
+// Lokalus log level (atskirtas nuo bendro LogLevel)
+enum class RunLogLevel { DEBUG, INFO, WARN, ERROR };
+
+// Paverčia RunLogLevel į string tag'ą, pvz. "[INFO] "
+static std::string lvl_tag(RunLogLevel lvl) {
+  switch (lvl) {
+    case RunLogLevel::DEBUG: return "[DEBUG] ";
+    case RunLogLevel::INFO:  return "[INFO] ";
+    case RunLogLevel::WARN:  return "[WARN] ";
+    case RunLogLevel::ERROR: return "[ERROR] ";
+    default:                 return "[LOG] ";
+  }
+}
+
+// Wrapperis aplink log_msg, kuris prideda level tag'ą.
+// Naudojam visam run.cpp vietoj tiesioginio log_msg kvietimo.
+static void run_log(ClusterState& cs, int selfId, RunLogLevel lvl, const std::string& msg) {
+  log_msg(cs, selfId, lvl_tag(lvl) + msg);
+}
+
+// -------- Global cluster state --------
+
+// Bendras klasterio valdymo state (NodeState, leaderId, alive ir t.t.)
+static ClusterState g_cluster_state;
+// Šio proceso node ID (atitinka CLUSTER masyvo id)
+static int      g_self_id   = 0;
+// Šio node informacija (host, control port ir t.t.)
+static NodeInfo g_self_info;
+
+// Laikas (ms nuo starto) kada paskutinį kartą gavom heartbeat iš leaderio
+static std::atomic<long long> g_last_heartbeat_ms{0};
+// Ar šiuo metu vyksta rinkimai (kad ne startint kelių election iškart)
 static std::atomic<bool>      g_election_inflight{false};
 
+// Dabartinis term (raft-style epochos numeris)
 static std::atomic<int>      g_current_term{0};
+// Už ką balsavome šiame term (kandidato id arba -1 jei dar nebalsavom)
 static std::atomic<int>      g_voted_for{-1};
+// Paskutinis mūsų žinomas sequencas (pagal WAL failą)
 static std::atomic<uint64_t> g_my_last_seq{0};
+
+// Rinkimų metu: kiek balsų gavom
+static std::atomic<int> g_votes_received{0};
+// Rinkimų term, kuriam šiuo metu renkamas lyderis
+static std::atomic<int> g_election_term{0};
+
+// Kiek yra narių CLUSTER masyve (klasterio dydis)
 static constexpr int CLUSTER_N =
     (int)(sizeof(CLUSTER) / sizeof(CLUSTER[0]));
 
-static int       g_leader_id{0};              // last seen leader (may flap)
-static int       g_effective_leader{0};       // confirmed leader
+// Paskutinio žinomo „nominal“ leaderio id (iš heartbeat'ų)
+static int       g_leader_id{0};
+// „Efektyvus“ leaderis – tas kuriuo jau tikim ir kuriam spawninam follower child
+static int       g_effective_leader{0};
+// Nuo kada (ms) nuolat matom tą patį leader_id per HB, kad jį patvirtinti kaip effective
 static long long g_leader_seen_since_ms{0};
 
-// util
-static inline long long now_ms(){
+// -------- Time helpers --------
+
+// Dabartinis laikas ms (steady_clock) – naudojam heartbeat timeout'ams ir pan.
+static inline long long now_ms() {
   using namespace std::chrono;
-  return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+  return duration_cast<milliseconds>(
+           steady_clock::now().time_since_epoch()
+         ).count();
 }
 
-// --------------- lastSeq helpers ---------------
-static uint64_t parse_last_seq_from_file(const std::string& path){
+// Gražina atsitiktinį rinkimų timeout'ą ms (kad node'ai nesinukentintų visi vienu metu)
+static int random_election_timeout_ms() {
+  static thread_local std::mt19937 rng(std::random_device{}());
+  std::uniform_int_distribution<int> dist(ELECTION_TIMEOUT_MS,
+                                          ELECTION_TIMEOUT_MS + 400);
+  return dist(rng);
+}
+
+// Log failo pavadinimas šitam node (pvz. "node1.log")
+static std::string my_log_file() {
+  return "node" + std::to_string(g_self_id) + ".log";
+}
+
+// -------- lastSeq helpers --------
+
+// Perskaito paskutinę eilutę iš WAL/log failo ir bando iš jos ištraukti seq (pirmą lauką)
+// Tikimasi formato: "<seq>\tKITI_LAUKAI"
+static uint64_t parse_last_seq_from_file(const std::string& path) {
   std::ifstream in(path);
-  if(!in.good()) return 0;
+  if (!in.good()) return 0;
+
   std::string line, last;
-  while(std::getline(in,line)) if(!line.empty()) last = line;
-  if(last.empty()) return 0;
-  // format: "seq \t OP \t key \t value" (wal / f*.log)
+  // Skaitom failą iki galo ir prisimenam paskutinę ne tuščią eilutę
+  while (std::getline(in, line))
+    if (!line.empty()) last = line;
+
+  if (last.empty()) return 0;
+
+  // Pirmiausia skaldom pagal tab'ą, jei nepavyksta – pagal tarpą
   auto parts = split(last, '\t');
-  if(parts.empty()) {
-    // follower may log with spaces; fallback split space
+  if (parts.empty()) {
     parts = split(last, ' ');
   }
-  if(parts.empty()) return 0;
-  try { return (uint64_t)std::stoull(parts[0]); } catch(...) { return 0; }
+  if (parts.empty()) return 0;
+
+  try {
+    return (uint64_t)std::stoull(parts[0]);
+  } catch (...) {
+    return 0;
+  }
 }
 
-static uint64_t compute_my_last_seq(){
-  // Leader stores in wal.log; followers in f<ID>.log. Check both and take max.
-  uint64_t w = parse_last_seq_from_file("wal.log");
-  std::string flog = "f" + std::to_string(SELF_ID) + ".log";
-  uint64_t f = parse_last_seq_from_file(flog);
-  return std::max(w,f);
+// Apskaičiuoja paskutinį seq šio node'o loge (kviečia parse_last_seq_from_file)
+static uint64_t compute_my_last_seq() {
+  return parse_last_seq_from_file(my_log_file());
 }
 
-// --------------- Child process utils ---------------
+// -------- Child process utils --------
+
+// Struktūra, sauganti paleisto vaiko informaciją (leader/follower binaras).
 struct Child {
   bool running{false};
 #ifdef _WIN32
@@ -74,305 +145,613 @@ struct Child {
 #endif
 };
 
-static bool child_alive(Child& c){
-  if(!c.running) return false;
+// Patikrina ar child procesas vis dar gyvas.
+static bool child_alive(Child& child) {
+  if (!child.running) return false;
 #ifdef _WIN32
   DWORD code = 0;
-  if (GetExitCodeProcess(c.pi.hProcess, &code)) return code == STILL_ACTIVE;
+  if (GetExitCodeProcess(child.pi.hProcess, &code))
+    return code == STILL_ACTIVE;
   return false;
 #else
   int status = 0;
-  pid_t r = waitpid(c.pid, &status, WNOHANG);
-  return r == 0;
+  pid_t r = waitpid(child.pid, &status, WNOHANG);
+  return r == 0; // 0 – procesas dar gyvas
 #endif
 }
 
-static bool start_process(const std::string& cmd, Child& c){
+// Paleidžia naują procesą su komandą cmd ir užpildo Child struktūrą.
+static bool start_process(const std::string& cmd, Child& child) {
 #ifdef _WIN32
-  STARTUPINFOA si{}; si.cb = sizeof(si);
+  STARTUPINFOA si{};
+  si.cb = sizeof(si);
   si.dwFlags = STARTF_USESHOWWINDOW;
   si.wShowWindow = SW_SHOWNORMAL;
+
   std::string mutableCmd = cmd;
   BOOL ok = CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE,
                            CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
-                           nullptr, nullptr, &si, &c.pi);
-  if(ok){ c.running=true; return true; }
+                           nullptr, nullptr, &si, &child.pi);
+  if (ok) {
+    child.running = true;
+    return true;
+  }
   return false;
 #else
   pid_t pid = fork();
-  if(pid==0){ execl("/bin/sh","sh","-c",cmd.c_str(),(char*)nullptr); _exit(127); }
-  else if(pid>0){ c.pid=pid; c.running=true; return true; }
+  if (pid == 0) {
+    // Vaiko procese – paleidžiam shell ir exe
+    execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
+    _exit(127); // jei execl nepavyko
+  } else if (pid > 0) {
+    // Tėvo procese
+    child.pid     = pid;
+    child.running = true;
+    return true;
+  }
   return false;
 #endif
 }
 
-static void stop_process(Child& c){
-  if(!c.running) return;
-#ifdef _WIN32
-  TerminateProcess(c.pi.hProcess, 0);
-  CloseHandle(c.pi.hThread);
-  CloseHandle(c.pi.hProcess);
+// Saugiai stabdo vaiką (siunčia SIGTERM/SIGKILL arba TerminateProcess ant Windows).
+static void stop_process(Child& child) {
+  if (!child.running) return;
+#ifndef _WIN32
+  if (child.pid > 0) {
+    // Pirmiausia – švelniai SIGTERM
+    kill(child.pid, SIGTERM);
+
+    // Laukiam iki ~2s ar procesas mirs
+    for (int i = 0; i < 20; ++i) {
+      int status = 0;
+      pid_t r = waitpid(child.pid, &status, WNOHANG);
+      if (r == child.pid) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // Jei po laiko procesas vis dar gyvas – SIGKILL
+    int status = 0;
+    if (waitpid(child.pid, &status, WNOHANG) == 0) {
+      kill(child.pid, SIGKILL);
+      waitpid(child.pid, &status, 0);
+    }
+  }
 #else
-  kill(c.pid, SIGTERM);
+  TerminateProcess(child.pi.hProcess, 0);
+  WaitForSingleObject(child.pi.hProcess, INFINITE);
+  CloseHandle(child.pi.hThread);
+  CloseHandle(child.pi.hProcess);
 #endif
-  c.running=false;
+
+  child.running = false;
 }
 
-// --------------- Control plane (Raft-lite) ---------------
-// Messages:
-// HB <term> <leaderId> <lastSeq>
-// VOTE_REQ <term> <candId> <candLastSeq>
-// VOTE_RESP <term> <granted 0/1>
+// -------- Control plane (HB / votes) --------
 
-static void handle_conn(sock_t cs){
-  std::string line;
-  if(!recv_line(cs,line)){ net_close(cs); return; }
-  auto p = split(trim(line),' ');
-  if(p.empty()){ net_close(cs); return; }
+// Apdoroja vieną inbound TCP jungtį kontroliniam protokolui
+// (HB, VOTE_REQ, VOTE_RESP) tarp run procesų.
+static void handle_conn(sock_t client_socket) {
+  try {
+    std::string line;
+    if (!recv_line(client_socket, line)) { net_close(client_socket); return; }
+    auto tokens = split(trim(line), ' ');
+    if (tokens.empty()) { net_close(client_socket); return; }
 
-  if(p[0]=="HB" && p.size()>=4){
-    int term   = std::stoi(p[1]);
-    int lid    = std::stoi(p[2]);
-    uint64_t lseq = (uint64_t)std::stoull(p[3]);
+    // HB <term> <leaderId> <lastSeq>
+    if (tokens[0] == "HB" && tokens.size() >= 4) {
+      int      term            = 0;
+      int      leader_id       = 0;
+      uint64_t leader_last_seq = 0;
 
-    if(term >= g_current_term.load()){
-      g_current_term = term;
-      g_voted_for    = -1;
-      G.state        = (lid==SELF_ID) ? NodeState::LEADER : NodeState::FOLLOWER;
-      g_leader_id    = lid;
-      g_last_hb_ms   = now_ms();
+      try {
+        term            = std::stoi(tokens[1]);
+        leader_id       = std::stoi(tokens[2]);
+        leader_last_seq = (uint64_t)std::stoull(tokens[3]);
+      } catch (...) {
+        run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+                "invalid HB line: " + line);
+        net_close(client_socket);
+        return;
+      }
 
-      // confirm leader after stable window
-      if (g_effective_leader != lid) {
-        if (g_leader_seen_since_ms == 0) g_leader_seen_since_ms = now_ms();
-        else if (now_ms() - g_leader_seen_since_ms >= 800) {
-          g_effective_leader = lid;
+      (void)leader_last_seq; // kol kas nenaudojam, bet galima būtų lyginti logų „šviežumą“
+
+      // Jei gautas term >= mūsų – atnaujinam savo state pagal heartbeat
+      if (term >= g_current_term.load()) {
+        g_current_term = term;
+        g_voted_for    = -1; // naujas term – pamirštam seną balsą
+
+        // Jeigu heartbeat'e leader_id = aš, laikom save LEADER, kitu atveju FOLLOWER
+        g_cluster_state.state =
+          (leader_id == g_self_id) ? NodeState::LEADER : NodeState::FOLLOWER;
+
+        g_leader_id         = leader_id;
+        g_last_heartbeat_ms = now_ms();
+
+        // Lėtas „debounce“ effective_leader: reikia ~800ms nuoseklių HB,
+        // kad priimtume naują leader'į.
+        if (g_effective_leader != leader_id) {
+          if (g_leader_seen_since_ms == 0)
+            g_leader_seen_since_ms = now_ms();
+          else if (now_ms() - g_leader_seen_since_ms >= 800) {
+            g_effective_leader     = leader_id;
+            g_leader_seen_since_ms = 0;
+          }
+        } else {
           g_leader_seen_since_ms = 0;
         }
-      } else {
-        g_leader_seen_since_ms = 0;
       }
+      net_close(client_socket);
+      return;
     }
-    net_close(cs); return;
-  }
 
-  if(p[0]=="VOTE_REQ" && p.size()>=4){
-    int term = std::stoi(p[1]);
-    int cid  = std::stoi(p[2]);
-    uint64_t cseq = (uint64_t)std::stoull(p[3]);
+    // VOTE_REQ <term> <candId> <candLastSeq>
+    if (tokens[0] == "VOTE_REQ" && tokens.size() >= 4) {
+      int      term          = 0;
+      int      candidate_id  = 0;
+      uint64_t candidate_seq = 0;
 
-    bool grant=false;
-    if(term > g_current_term.load()){
-      g_current_term = term;
-      g_voted_for    = -1;
-    }
-    if(term == g_current_term.load()){
-      uint64_t myseq = g_my_last_seq.load();
-      if( (g_voted_for.load()==-1 || g_voted_for.load()==cid) && (cseq >= myseq) ){
-        g_voted_for = cid;
-        grant = true;
+      try {
+        term          = std::stoi(tokens[1]);
+        candidate_id  = std::stoi(tokens[2]);
+        candidate_seq = (uint64_t)std::stoull(tokens[3]);
+      } catch (...) {
+        run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+                "invalid VOTE_REQ line: " + line);
+        net_close(client_socket);
+        return;
       }
-    }
-    // reply
-    if(auto n = getNode(cid)){
-      sock_t s = tcp_connect(n->host, n->port);
-      if(s!=NET_INVALID){
-        send_all(s, "VOTE_RESP " + std::to_string(term) + " " + (grant?"1":"0") + "\n");
-        net_close(s);
+
+      bool grant = false;
+
+      // Jei kandidato term > mūsų term – atnaujinam term ir „resetinam“ balsą
+      if (term > g_current_term.load()) {
+        g_current_term = term;
+        g_voted_for    = -1;
       }
+
+      // Balsavimo logika: balsuojam jei:
+      // - term sutampa
+      // - dar nebalsavom arba jau balsavom už šį kandidatą
+      // - kandidato log'o seq nėra atsilikęs nuo mūsų
+      if (term == g_current_term.load()) {
+        uint64_t my_seq = g_my_last_seq.load();
+        if ((g_voted_for.load() == -1 || g_voted_for.load() == candidate_id) &&
+            (candidate_seq >= my_seq)) {
+          g_voted_for = candidate_id;
+          grant       = true;
+        }
+      }
+
+      // Grąžinam VOTE_RESP kandidatui per atskirą TCP jungtį
+      if (auto candidate_node = getNode(candidate_id)) {
+        sock_t s = tcp_connect(candidate_node->host, candidate_node->port);
+        if (s != NET_INVALID) {
+          send_all(
+            s,
+            "VOTE_RESP " + std::to_string(term) + " " + (grant ? "1" : "0") + "\n"
+          );
+          net_close(s);
+        } else {
+          run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+                  "failed to connect back to candidate for VOTE_RESP");
+        }
+      }
+
+      net_close(client_socket);
+      return;
     }
-    net_close(cs); return;
-  }
 
-  if(p[0]=="VOTE_RESP" && p.size()>=3){
-    net_close(cs); return;
-  }
+    // VOTE_RESP <term> <granted>
+    if (tokens[0] == "VOTE_RESP" && tokens.size() >= 3) {
+      int resp_term = 0;
+      int granted   = 0;
 
-  net_close(cs);
+      try {
+        resp_term = std::stoi(tokens[1]);
+        granted   = std::stoi(tokens[2]);
+      } catch (...) {
+        run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+                "invalid VOTE_RESP line: " + line);
+        net_close(client_socket);
+        return;
+      }
+
+      // Skaičiuojam tik tada, kai patys esam CANDIDATE, term sutampa ir granted=1
+      if (g_cluster_state.state == NodeState::CANDIDATE &&
+          resp_term == g_election_term.load() &&
+          granted == 1) {
+        g_votes_received.fetch_add(1);
+      }
+
+      net_close(client_socket);
+      return;
+    }
+
+    // Nežinoma kontrolinė žinutė – tiesiog užloginam
+    run_log(g_cluster_state, g_self_id, RunLogLevel::DEBUG,
+            "unknown control message: " + line);
+    net_close(client_socket);
+  } catch (const std::exception& ex) {
+    run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+            std::string("exception in handle_conn: ") + ex.what());
+    net_close(client_socket);
+  } catch (...) {
+    run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+            "unknown exception in handle_conn");
+    net_close(client_socket);
+  }
 }
 
-static void listen_loop(){
-  sock_t ls = tcp_listen(SELF.port);
-  if(ls==NET_INVALID){ std::cerr<<"cannot bind control port "<<SELF.port<<"\n"; return; }
-  while(G.alive){
-    sock_t cs = tcp_accept(ls);
-    if(cs!=NET_INVALID) std::thread(handle_conn, cs).detach();
-  }
-  net_close(ls);
-}
-
-static void leader_heartbeat(){
-  while(G.alive && G.state==NodeState::LEADER){
-    uint64_t lseq = compute_my_last_seq();
-    g_my_last_seq = lseq;
-    for(auto& n: CLUSTER){
-      sock_t s = tcp_connect(n.host, n.port);
-      if(s!=NET_INVALID){
-        send_all(s, "HB " + std::to_string(g_current_term.load()) + " " +
-                      std::to_string(SELF_ID) + " " +
-                      std::to_string(lseq) + "\n");
-        net_close(s);
-      }
+// Pagrindinis „control“ serverio ciklas: klausosi g_self_info.port
+// ir kiekvieną jungtį atiduoda handle_conn threade.
+static void listen_loop() {
+  try {
+    sock_t listen_socket = tcp_listen(g_self_info.port);
+    if (listen_socket == NET_INVALID) {
+      std::cerr << "cannot bind control port " << g_self_info.port << "\n";
+      return;
     }
-    g_last_hb_ms = now_ms();
-    std::this_thread::sleep_for(std::chrono::milliseconds(HEARTBEAT_INTERVAL_MS));
+
+    while (g_cluster_state.alive) {
+      sock_t client_socket = tcp_accept(listen_socket);
+      if (client_socket != NET_INVALID)
+        std::thread(handle_conn, client_socket).detach();
+    }
+
+    net_close(listen_socket);
+  } catch (const std::exception& ex) {
+    run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+            std::string("exception in listen_loop: ") + ex.what());
+  } catch (...) {
+    run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+            "unknown exception in listen_loop");
   }
 }
 
-static void start_election(){
-  bool expected=false;
-  if(!g_election_inflight.compare_exchange_strong(expected, true)) return;
+// -------- Heartbeat & elections --------
 
-  g_current_term = g_current_term.load() + 1;
-  g_voted_for    = SELF_ID;
-  G.state        = NodeState::CANDIDATE;
-  g_my_last_seq  = compute_my_last_seq();
+// Jeigu mes esame LEADER, ši funkcija periodiškai siunčia:
+// HB <term> <leaderId> <lastSeq>
+// visiems CLUSTER nariams.
+static void leader_heartbeat() {
+  try {
+    while (g_cluster_state.alive && g_cluster_state.state == NodeState::LEADER) {
+      // Paskutinis mūsų WAL seq (iš log failo)
+      uint64_t last_seq = compute_my_last_seq();
+      g_my_last_seq     = last_seq;
 
-  log_msg(G, SELF_ID, "election term " + std::to_string(g_current_term.load()) +
-                      " lastSeq=" + std::to_string(g_my_last_seq.load()));
+      // Broadcastinam heartbeat'ą visiems node'ams
+      for (auto& node : CLUSTER) {
+        sock_t s = tcp_connect(node.host, node.port);
+        if (s != NET_INVALID) {
+          send_all(
+            s,
+            "HB " + std::to_string(g_current_term.load()) + " " +
+            std::to_string(g_self_id) + " " +
+            std::to_string(last_seq) + "\n"
+          );
+          net_close(s);
+        }
+      }
 
-  std::atomic<int> votes{1}; // vote for self
-  // send VOTE_REQ to all
-  for(auto& n: CLUSTER){
-    if(n.id==SELF_ID) continue;
-    sock_t s = tcp_connect(n.host, n.port);
-    if(s!=NET_INVALID){
-      send_all(s, "VOTE_REQ " + std::to_string(g_current_term.load()) + " " +
-                    std::to_string(SELF_ID) + " " +
-                    std::to_string(g_my_last_seq.load()) + "\n");
+      g_last_heartbeat_ms = now_ms();
+      std::this_thread::sleep_for(
+        std::chrono::milliseconds(HEARTBEAT_INTERVAL_MS)
+      );
+    }
+  } catch (const std::exception& ex) {
+    run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+            std::string("exception in leader_heartbeat: ") + ex.what());
+  } catch (...) {
+    run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+            "unknown exception in leader_heartbeat");
+  }
+}
+
+// Startuoja naujus rinkimus (jei dar nevyksta).
+// 1) Pakelia term
+// 2) Pasižymi CANDIDATE, balsuoja už save
+// 3) Išsiunčia VOTE_REQ visiems reachinamiems node'ams
+// 4) Laukia balsų arba timeout'o
+static void start_election() {
+  bool expected = false;
+  // Uždedam „lock“, kad vienu metu tik vienas election galėtų būti.
+  if (!g_election_inflight.compare_exchange_strong(expected, true))
+    return;
+
+  int new_term = g_current_term.load() + 1;
+  g_current_term  = new_term;
+  g_election_term = new_term;
+  g_voted_for     = g_self_id;
+  g_cluster_state.state = NodeState::CANDIDATE;
+  g_my_last_seq   = compute_my_last_seq();
+
+  // Už save – 1 balsas
+  g_votes_received = 1;
+
+  run_log(
+    g_cluster_state,
+    g_self_id,
+    RunLogLevel::INFO,
+    "start election term " + std::to_string(g_current_term.load()) +
+    " lastSeq=" + std::to_string(g_my_last_seq.load())
+  );
+
+  // reachable_nodes – tie, su kuriais pavyko užmegzti TCP jungtį
+  int reachable_nodes = 1; // mes patys
+  for (auto& node : CLUSTER) {
+    if (node.id == g_self_id) continue;
+    sock_t s = tcp_connect(node.host, node.port);
+    if (s != NET_INVALID) {
+      reachable_nodes++;
+      send_all(
+        s,
+        "VOTE_REQ " + std::to_string(g_current_term.load()) + " " +
+        std::to_string(g_self_id) + " " +
+        std::to_string(g_my_last_seq.load()) + "\n"
+      );
       net_close(s);
     }
   }
 
-  // collect votes for up to ELECTION_TIMEOUT
-  auto deadline = now_ms() + ELECTION_TIMEOUT_MS;
-  while(now_ms() < deadline){
-    for(auto& n: CLUSTER){
-      if(n.id==SELF_ID) continue;
-    }
-    // check if we already have majority
-    if (votes.load() > CLUSTER_N / 2) break;
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  }
+  // Reikalingas balsų skaičius = majority iš reachable_nodes
+  int required_votes = reachable_nodes / 2 + 1;
 
-  for(auto& n: CLUSTER){
-    if(n.id==SELF_ID) continue;
-    sock_t s = tcp_connect(n.host, n.port);
-    if(s!=NET_INVALID){
-      send_all(s, "VOTE_REQ " + std::to_string(g_current_term.load()) + " " +
-                    std::to_string(SELF_ID) + " " +
-                    std::to_string(g_my_last_seq.load()) + "\n");
-      net_close(s);
-    }
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  // Jeigu esam vienintelis reachable node – iškart tampam leader'iu.
+  if (required_votes <= 1) {
+    g_cluster_state.state    = NodeState::LEADER;
+    g_cluster_state.leaderId = g_self_id;
+    g_leader_id              = g_self_id;
+    g_effective_leader       = g_self_id;
+    g_leader_seen_since_ms   = 0;
 
-  if (now_ms() - g_last_hb_ms.load() <= HEARTBEAT_TIMEOUT_MS) {
-    // someone else is alive as leader; back off
-    G.state = NodeState::FOLLOWER;
+    run_log(
+      g_cluster_state,
+      g_self_id,
+      RunLogLevel::INFO,
+      "became LEADER term " + std::to_string(g_current_term.load()) +
+      " (single reachable node)"
+    );
+
+    std::thread(leader_heartbeat).detach();
+    std::this_thread::sleep_for(std::chrono::milliseconds(800));
     g_election_inflight = false;
     return;
   }
 
-  // become leader
-  G.state = NodeState::LEADER;
-  G.leaderId = SELF_ID;
-  g_leader_id = SELF_ID;
-  g_effective_leader = SELF_ID;
-  g_leader_seen_since_ms = 0;
-  log_msg(G, SELF_ID, "became LEADER term " + std::to_string(g_current_term.load()));
-  std::thread(leader_heartbeat).detach();
-  std::this_thread::sleep_for(std::chrono::milliseconds(800)); // stabilize
-  g_election_inflight = false;
+  // Laukiam balsų iki election_timeout pabaigos
+  int election_timeout = random_election_timeout_ms();
+  auto deadline        = now_ms() + election_timeout;
+
+  while (now_ms() < deadline) {
+    // Jei rinkimų metu pasirodo kito leaderio heartbeat – atsitraukiam
+    if (now_ms() - g_last_heartbeat_ms.load() <= HEARTBEAT_TIMEOUT_MS &&
+        g_cluster_state.state != NodeState::LEADER) {
+      run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
+              "another leader detected during election, reverting to FOLLOWER");
+      g_cluster_state.state = NodeState::FOLLOWER;
+      g_election_inflight   = false;
+      return;
+    }
+
+    // Gal rinkimų metu jau spėjom patys tapti LEADER kita logikos šaka
+    if (g_cluster_state.state == NodeState::LEADER) {
+      g_election_inflight = false;
+      return;
+    }
+
+    // Patikrinam, ar jau turim daugumą balsų
+    if (g_votes_received.load() >= required_votes) {
+      g_cluster_state.state    = NodeState::LEADER;
+      g_cluster_state.leaderId = g_self_id;
+      g_leader_id              = g_self_id;
+      g_effective_leader       = g_self_id;
+      g_leader_seen_since_ms   = 0;
+
+      run_log(
+        g_cluster_state,
+        g_self_id,
+        RunLogLevel::INFO,
+        "became LEADER term " + std::to_string(g_current_term.load()) +
+        " with votes=" + std::to_string(g_votes_received.load()) +
+        " (required=" + std::to_string(required_votes) + ")"
+      );
+
+      std::thread(leader_heartbeat).detach();
+      std::this_thread::sleep_for(std::chrono::milliseconds(800));
+      g_election_inflight = false;
+      return;
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  // Jei pasibaigė election timeout ir daugumos negavom – grįžtam į FOLLOWER.
+  run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
+          "election term " + std::to_string(g_current_term.load()) +
+          " timed out without majority; reverting to FOLLOWER");
+
+  g_cluster_state.state = NodeState::FOLLOWER;
+  g_election_inflight   = false;
 }
 
-static void follower_monitor(){
-  g_last_hb_ms = now_ms(); // bootstrap
-  while(G.alive){
-    g_my_last_seq = compute_my_last_seq(); // keep fresh for voting
-    if(G.state != NodeState::LEADER){
-      long long age = now_ms() - g_last_hb_ms.load();
-      if(age > HEARTBEAT_TIMEOUT_MS && !g_election_inflight.load()){
-        log_msg(G, SELF_ID, "leader timeout -> election");
+// Followerių monitorius – stebi heartbeat'ų amžių ir,
+// jei leaderis „dingsta“, inicijuoja rinkimus.
+static void follower_monitor() {
+  g_last_heartbeat_ms = now_ms();
+  while (g_cluster_state.alive) {
+    g_my_last_seq = compute_my_last_seq();
+
+    if (g_cluster_state.state != NodeState::LEADER) {
+      long long age = now_ms() - g_last_heartbeat_ms.load();
+      // Jei seniai negavom heartbeat ir rinkimai dar nevyksta – startuojam.
+      if (age > HEARTBEAT_TIMEOUT_MS && !g_election_inflight.load()) {
+        run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+                "leader timeout -> starting election");
         start_election();
       }
     }
+
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
 }
 
-// --------------- role → child process manager ---------------
-static Child child;
+// -------- role → child process manager --------
 
-static void role_process_manager(){
-  NodeState lastRole = NodeState::FOLLOWER;
-  int       lastEff  = 0;
+// Čia tvarkom realius „data plane“ procesus: leader ir follower binarus.
+static Child g_child;
 
-  while(G.alive){
-    NodeState role = G.state.load();
-    int eff = (role==NodeState::LEADER) ? SELF_ID : g_effective_leader;
+// Šitas thread'as žiūri į NodeState ir spawn'ina / stabdo
+// atitinkamą child procesą: leader arba follower.
+static void role_process_manager() {
+  NodeState last_role = NodeState::FOLLOWER;
+  int       last_effective_leader = 0;
 
-    if(role == NodeState::LEADER){
-      if(lastRole != NodeState::LEADER || !child_alive(child)){
-        stop_process(child);
+  std::string log_file = my_log_file();
+
+  while (g_cluster_state.alive) {
+    NodeState role = g_cluster_state.state.load();
+    int effective_leader =
+      (role == NodeState::LEADER) ? g_self_id : g_effective_leader;
+
+    // Jei mes = LEADER: turi veikti leader.exe / leader.
+    if (role == NodeState::LEADER) {
+      // Spawninam iš naujo jei:
+      // - anksčiau nebuvom LEADER
+      // - arba child'as numirė
+      if (last_role != NodeState::LEADER || !child_alive(g_child)) {
+        stop_process(g_child);
 #ifdef _WIN32
-        std::string cmd = ".\\leader.exe " + std::to_string(CLIENT_PORT) + " " +
-                          std::to_string(REPL_PORT) + " wal.log 1";
+        std::string cmd = ".\\leader.exe " +
+                          std::to_string(CLIENT_PORT) + " " +
+                          std::to_string(REPL_PORT)   + " " +
+                          log_file + " 1"+
+                      g_self_info.host;
 #else
-        std::string cmd = "./leader " + std::to_string(CLIENT_PORT) + " " +
-                          std::to_string(REPL_PORT) + " wal.log 1";
+        // Linux/macOS komanda leader binarui paleisti
+        std::string cmd = "./leader " +
+                          std::to_string(CLIENT_PORT) + " " +
+                          std::to_string(REPL_PORT)   + " " +
+                          log_file + " 1 " +
+                          g_self_info.host;
 #endif
-        log_msg(G, SELF_ID, "spawn: " + cmd);
-        start_process(cmd, child);
+        run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
+                "spawn leader child: " + cmd);
+        start_process(cmd, g_child);
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
       }
     } else {
-      if(eff!=0 && (lastRole==NodeState::LEADER || lastEff!=eff || !child_alive(child))){
-        stop_process(child);
-        const NodeInfo* L = getNode(eff);
-        if(L){
-          std::string flog = "f" + std::to_string(SELF_ID) + ".log";
-          std::string fsnap= "f" + std::to_string(SELF_ID) + ".snap";
-          uint16_t readp = FOLLOWER_READ_PORT(SELF_ID);
+      // Jei mes NE leader – turim būti followeris, jei žinom effective_leader.
+      if (effective_leader != 0 &&
+          (last_role == NodeState::LEADER ||
+           last_effective_leader != effective_leader ||
+           !child_alive(g_child))) {
+
+        stop_process(g_child);
+        const NodeInfo* leader_node = getNode(effective_leader);
+        if (leader_node) {
+          std::string follower_log  = log_file;                           // WAL failas followeriui
+          std::string follower_snap = "f" + std::to_string(g_self_id) + ".snap"; // snapshot failas
+          uint16_t    read_port     = FOLLOWER_READ_PORT(g_self_id);      // read-only API portas
 #ifdef _WIN32
-          std::string cmd = ".\\follower.exe " + L->host + " " + std::to_string(REPL_PORT) +
-                            " " + flog + " " + fsnap + " " + std::to_string(readp);
+          std::string cmd = ".\\follower.exe " +
+                            leader_node->host + " " +
+                            std::to_string(REPL_PORT) + " " +
+                            follower_log  + " " +
+                            follower_snap + " " +
+                            std::to_string(read_port) + " " +
+                            std::to_string(g_self_id);
 #else
-          std::string cmd = "./follower " + L->host + " " + std::to_string(REPL_PORT) +
-                            " " + flog + " " + fsnap + " " + std::to_string(readp);
+          // Linux/macOS follower binaro paleidimo komanda
+          std::string cmd = "./follower " +
+                            leader_node->host + " " +
+                            std::to_string(REPL_PORT) + " " +
+                            follower_log  + " " +
+                            follower_snap + " " +
+                            std::to_string(read_port) + " " +
+                            std::to_string(g_self_id);
 #endif
-          log_msg(G, SELF_ID, "spawn: " + cmd);
-          start_process(cmd, child);
+          run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
+                  "spawn follower child: " + cmd);
+          start_process(cmd, g_child);
           std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        } else {
+          run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+                  "no NodeInfo for effective leader id " + std::to_string(effective_leader));
         }
       }
     }
-    lastRole = role;
-    lastEff  = eff;
+
+    last_role             = role;
+    last_effective_leader = effective_leader;
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
   }
-  stop_process(child);
+
+  // Išeinant – uždarom vaiką
+  stop_process(g_child);
 }
 
-// ------------------------------- main -------------------------------
-int main(int argc, char** argv){
-  if(argc<2){ std::cerr<<"Usage: run <node_id>\n"; return 1; }
-  SELF_ID = std::stoi(argv[1]);
-  const NodeInfo* me = getNode(SELF_ID);
-  if(!me){ std::cerr<<"bad node id\n"; return 1; }
-  SELF = *me;
+// -------- main --------
 
-  log_msg(G, SELF_ID, "control port " + std::to_string(SELF.port));
-  g_my_last_seq = compute_my_last_seq();
+int main(int argc, char** argv) {
+  try {
+    if (argc < 2) {
+      std::cerr << "Usage: run <node_id>\n";
+      return 1;
+    }
 
-  std::thread(listen_loop).detach();
-  std::thread(follower_monitor).detach();
-  std::thread(role_process_manager).detach();
+    int idTmp = 0;
+    try {
+      idTmp = std::stoi(argv[1]);
+    } catch (...) {
+      std::cerr << "bad node id (not an integer)\n";
+      return 1;
+    }
 
-  // small stagger
-  std::this_thread::sleep_for(std::chrono::milliseconds(400 + (SELF_ID*123)%400));
-  start_election();
+    g_self_id = idTmp;
+    const NodeInfo* me = getNode(g_self_id);
+    if (!me) {
+      std::cerr << "bad node id\n";
+      return 1;
+    }
+    g_self_info = *me;
 
-  while(true) std::this_thread::sleep_for(std::chrono::seconds(5));
-  return 0;
+    // Log'as, kad žinotume, kokiame control porte klausom šito run proceso
+    run_log(
+      g_cluster_state,
+      g_self_id,
+      RunLogLevel::INFO,
+      "control port " + std::to_string(g_self_info.port)
+    );
+
+    // Pasiimam paskutinį seq iš savo log failo
+    g_my_last_seq = compute_my_last_seq();
+
+    // Paleidžiam 3 background thread'us:
+    //  - listen_loop: priima HB/VOTE_REQ/VOTE_RESP
+    //  - follower_monitor: stebi heartbeat'us ir startuoja rinkimus
+    //  - role_process_manager: spawn'ina leader/follower child binarus
+    std::thread(listen_loop).detach();
+    std::thread(follower_monitor).detach();
+    std::thread(role_process_manager).detach();
+
+    // Nedidelis random „delay“ prieš pirmus rinkimus, kad node'ai nesusidubliuotų
+    std::this_thread::sleep_for(
+      std::chrono::milliseconds(400 + (g_self_id * 123) % 400)
+    );
+    start_election();
+
+    // Pagrindinis thread'as tiesiog miega – visa logika vyksta threade.
+    while (true)
+      std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    return 0;
+  } catch (const std::exception& ex) {
+    std::cerr << "[run.cpp] fatal exception: " << ex.what() << "\n";
+    return 1;
+  } catch (...) {
+    std::cerr << "[run.cpp] fatal unknown exception\n";
+    return 1;
+  }
 }
