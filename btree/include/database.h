@@ -59,6 +59,12 @@ private:
     bool Remove(const string& key);
     void Optimize();
 
+    // Wrapper metodai WAL metodams, kad būtų patogiau koduot.
+    bool ExecuteLogSet(const string &key, const string &value);
+    bool ExecuteLogDelete(const string &key);
+
+    uint64_t GetWalSequenceNumber() const { return wal.GetCurrentSequenceNumber(); }
+
     // For Debug
     void CoutDatabase() const;
 

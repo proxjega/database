@@ -9,10 +9,10 @@ struct NodeInfo {
 
 // Fiksuotas klasterio narių sąrašas.
 static NodeInfo CLUSTER[] = {
-    {1, "100.93.100.112", 8001},  // node1
-    {2, "100.125.32.90",  8002},  // node2
-    {3, "100.96.196.71",  8003},  // node3
-    {4, "100.99.168.81",  8004},  // node4
+    {1, "127.0.0.1", 8001},  // node1
+    {2, "127.0.0.1",  8002},  // node2
+    {3, "127.0.0.1",  8003},  // node3
+    {4, "127.0.0.1",  8004},  // node4
 };
 
 // Lyderio atviri prievadai.
