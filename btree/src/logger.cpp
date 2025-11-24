@@ -291,7 +291,7 @@ bool WAL::LogDelete(const string &key) {
     return !this->walFile.fail();
 }
 
-bool WAL::LogWithLSN(uint64_t lsn, WalOperation operation, const string &key, const string &value) {
+bool WAL::LogWithLSN(WalRecord &walRecord) {
     if (!this->walFile.is_open()) {
         return false;
     }
@@ -303,9 +303,9 @@ bool WAL::LogWithLSN(uint64_t lsn, WalOperation operation, const string &key, co
     }
 
     // Update internal sequence number to track the highest seen LSN
-    this->currentSequenceNumber = std::max(lsn, this->currentSequenceNumber);
+    this->currentSequenceNumber = std::max(walRecord.lsn, this->currentSequenceNumber);
 
-    WalRecord record(lsn, operation, key, value);
+    WalRecord record(walRecord.lsn, walRecord.operation, walRecord.key, walRecord.value);
     return WriteRecordToStream(record);
 }
 

@@ -1020,34 +1020,62 @@ bool Database::RecoverFromWal() {
 }
 
 /**
- * @brief Wrapper metodas, kuris iškviečia vidinio WAL LogSet() metodą.
+ * @brief Log'ina operacija, įrašo į B+ medį, grąžina LSN.
  * @param key. Raktas.
  * @param value. Rakto reikšmė.
 */
-bool Database::ExecuteLogSet(const string &key, const string &value) {
-    bool logSuccess = this->wal.LogSet(key, value);
-
-    if (!logSuccess) {
-        std::cerr << "Critical Error: Failed to write to WAL. Operation aborted.\n";
-        return false; // Jei WAL įrašymas nepavyko, tai nerašome ir į B+ medį.
+uint64_t Database::ExecuteLogSetWithLSN(const string &key, const string &value) {
+    // 1. Rašome į WAL.
+    if (!this->wal.LogSet(key, value)) {
+        std::cerr << "Critical Error: Failed to write to WAL during Set.\n";
+        return 0;
     }
 
-    return this->Set(key, value);
+    // 2. Rašome į B+ medį.
+    if (!this->Set(key, value)) {
+        std::cerr << "Error: WAL written but B+Tree Set failed.\n";
+        return 0;
+    }
+
+    // 3. Grąžiname LSN.
+    return this->wal.GetCurrentSequenceNumber();
 }
 
 /**
- * @brief Wrapper metodas, kuris iškviečia vidinio WAL LogDelete() metodą.
+ * @brief Log'ina operacija, ištrina iš B+ medžio, grąžina LSN.
  * @param key. Raktas, kuris trinamas.
 */
-bool Database::ExecuteLogDelete(const string &key) {
-    bool logSuccess = this->wal.LogDelete(key);
-
-    if (!logSuccess) {
-        std::cerr << "Critical Error: Failed to write to WAL.\n";
-        return false; // Jei WAL įrašymas nepavyko, tai nerašome ir į B+ medį.
+uint64_t Database::ExecuteLogDeleteWithLSN(const string &key) {
+    // 1. Rašome į WAL.
+    if (!this->wal.LogDelete(key)) {
+        std::cerr << "Critical Error: Failed to write to WAL during Delete.\n";
+        return 0;
     }
 
-    return this->Remove(key);
+    // 2. Triname iš B+ medžio.
+    this->Remove(key);
+
+    // 3. Gražiname LSN.
+    return this->wal.GetCurrentSequenceNumber();
+}
+
+/**
+ * @brief Atliekama specifinė operacija, su specifiniu LSN.
+ * Turėtų naudoti FOLLOWER'is, kad matchintų LEADER'į.
+*/
+bool Database::ApplyReplication(WalRecord walRecord) {
+    // 1. Rašome į WAL su specifiniu LSN (nuo leader'io)
+    if (!this->wal.LogWithLSN(walRecord)) {
+        std::cerr << "Follower Error: Failed to write replication record to WAL.\n";
+        return false;
+    }
+
+    // 2. Rašome į B+ medį.
+    if (walRecord.operation == WalOperation::SET) {
+        return this->Set(walRecord.key, walRecord.value);
+    }
+
+    return this->Remove(walRecord.key);
 }
 
 /**

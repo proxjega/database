@@ -1,5 +1,7 @@
 #include "common.hpp"
+#include "../btree/include/database.h"
 #include <algorithm>
+#include <memory>
 #include <unordered_set>
 #include <unordered_map>
 #include <thread>
@@ -20,42 +22,17 @@ static void flog(LogLevel lvl, const std::string& msg) {
 
 /* ========= In-memory state ========= */
 
-// Paprastas key-value žemėlapis, kuriame laikom lyderio replikacijos rezultatą.
-static std::unordered_map<std::string, std::string> kv_store;
+static std::unique_ptr<Database> duombaze;
 
 // Paskutinio pritaikyto WAL įrašo sekos numeris.
 // Naudojamas HELLO žinutėje, kad leader'is žinotų nuo kurio lsn siųsti toliau.
 static uint64_t last_applied_lsn = 0;
-
-// Rinkinys su visais jau pritaikytais lsn numeriais (naudojam greitam patikrinimui).
-static std::unordered_set<uint64_t> applied_lsn_numbers;
-
-// Žemėlapis lsn -> WalRecord. Saugo pilną įrašo turinį, kad būtų galima aptikti konfliktus
-// (kai leader'is su tuo pačiu lsn atsiunčia kažką kitą).
-static std::unordered_map<uint64_t, WalRecord> applied_entries;
 
 // Informacija apie leader'į (naudojama REDIRECT atsakymui read-only serveryje).
 static std::string g_leader_host;
 static constexpr uint16_t LEADER_CLIENT_PORT = 7001; // leader'io kliento API (SET/GET/DEL) portas
 
 /* ========= Helpers ========= */
-
-// Pritaiko vieną WAL įrašą followerio in-memory būsenai.
-static void apply_entry(const WalRecord& WalRecord) {
-    // 1) pritaikom operaciją key-value žemėlapiui
-    if (WalRecord.operation == WalOperation::SET) {
-        kv_store[WalRecord.key] = WalRecord.value;  // SET – įrašom / atnaujinam reikšmę
-    } else {
-        kv_store.erase(WalRecord.key);          // DEL – ištrinam raktą
-    }
-
-    // 2) atnaujinam paskutinį lsn, jei šis įrašas naujesnis
-    last_applied_lsn = std::max(WalRecord.lsn, last_applied_lsn);
-
-    // 3) įsimenam, kad šitas lsn jau pritaikytas ir ką tiksliai padarėm
-    applied_lsn_numbers.insert(WalRecord.lsn);
-    applied_entries[WalRecord.lsn] = WalRecord;
-}
 
 /* ========= Read-only server (GET / REDIRECT) ========= */
 
@@ -98,11 +75,11 @@ static void read_only_server(uint16_t port) {
                         // Komanda: GET <key>
                         if (tokens.size() >= 2 && tokens[0] == "GET") {
                             const std::string& key = tokens[1];
-                            auto it = kv_store.find(key);
-                            if (it == kv_store.end()) {
-                                send_all(client_socket, "NOT_FOUND\n");
+                            auto result = duombaze->Get(key);
+                            if (result.has_value()) {
+                                send_all(client_socket, "VALUE " + result->value + "\n");
                             } else {
-                                send_all(client_socket, "VALUE " + it->second + "\n");
+                                send_all(client_socket, "NOT_FOUND\n");
                             }
                         } else {
                             // Bet kokia kita komanda – redirect į leader'į.
@@ -171,9 +148,15 @@ int main(int argc, char** argv) {
         }
         uint16_t leader_repl_port = static_cast<uint16_t>(portTmp);
 
-        // Kelias iki lokalaus WAL failo, kuriame followeris saugo gautus įrašus
-        std::string db_name = argv[3];
-        WAL wal(db_name);
+        // Inicializuojame duomenų bazę.
+        std::string dbName = argv[3];
+
+        flog(LogLevel::INFO, "starting follower db=" + dbName);
+        duombaze = std::make_unique<Database>(dbName);
+
+        // Gauname LSN is Duombazės WAL'o.
+        last_applied_lsn = duombaze->GetWalSequenceNumber();
+        flog(LogLevel::INFO, "Database loaded, last_applied_lsn=" + std::to_string(last_applied_lsn));
 
         // Read-only serverio portas (GET/REDIRECT API)
         int roTmp = 0;
@@ -194,21 +177,8 @@ int main(int argc, char** argv) {
         flog(LogLevel::INFO,
              "starting follower; leader=" + g_leader_host +
              ":" + std::to_string(leader_repl_port) +
-             " db_name=" + db_name +
+             " dbName=" + dbName +
              " read_port=" + std::to_string(read_only_port));
-
-        // --- 1) Atkuriam būseną iš WAL failo ---
-
-        auto previous_entries = wal.ReadAll();
-
-        // Kiekvieną rastą WAL įrašą pritaikom vietiniam kv_store
-        for (const auto& record : previous_entries) {
-            apply_entry(record);  // kv_store + last_applied_lsn + lsn map
-        }
-
-        flog(LogLevel::INFO,
-             "WAL loaded: " + std::to_string(previous_entries.size()) +
-             " entries, last_applied_lsn=" + std::to_string(last_applied_lsn));
 
         // --- 2) Startuojam read-only GET serverį atskiram threade ---
         std::thread read_thread(read_only_server, read_only_port);
@@ -313,21 +283,21 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
-                        if (applied_entries.count(lsn)) {
+                        if (lsn <= last_applied_lsn) {
                             send_all(repl_socket, "ACK " + std::to_string(lsn) + "\n");
                             continue;
                         }
 
                         // Naujas lsn – sukuriam WalRecord objektą
-                        WalRecord record(lsn, WalOperation::SET, tokens[2], tokens[3]);
+                        WalRecord walRecord(lsn, WalOperation::SET, tokens[2], tokens[3]);
 
-                        // Pritaikom atmintyje ir parašom į WAL failą
-                        wal.LogWithLSN(record.lsn, record.operation, record.key, record.value);
-                        apply_entry(record);
-
-                        // Patvirtinam lyderiui
-                        send_all(repl_socket,
-                                 "ACK " + std::to_string(record.lsn) + "\n");
+                        // Replikuojamę lyderį.
+                        if (duombaze->ApplyReplication(walRecord)) {
+                            last_applied_lsn = walRecord.lsn;
+                            // Patvirtinam lyderiui
+                             send_all(repl_socket, "ACK " + std::to_string(walRecord.lsn) + "\n");
+                             got_any_replication = true;
+                        }
                     }
                     // --- DELETE lsn key ---
                     else if (tokens[0] == "DELETE") {
@@ -348,23 +318,21 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
-                        if (applied_entries.count(lsn)) {
-                            // Turinyje jokio konflikto – tiesiog išsiunčiam ACK.
-                            send_all(repl_socket,
-                                     "ACK " + std::to_string(lsn) + "\n");
+                        if (lsn <= last_applied_lsn) {
+                            send_all(repl_socket, "ACK " + std::to_string(lsn) + "\n");
                             continue;
                         }
 
                         // Naujas DELETE įrašas
-                        WalRecord record(lsn, WalOperation::DELETE, tokens[2]);
+                        WalRecord walRecord(lsn, WalOperation::DELETE, tokens[2]);
 
-                        // Pritaikom atmintyje ir įrašom į WAL
-                        wal.LogWithLSN(record.lsn, record.operation, record.key);
-                        apply_entry(record);
-
-                        // ACK lyderiui
-                        send_all(repl_socket,
-                                 "ACK " + std::to_string(record.lsn) + "\n");
+                        // Replikuojame lyderį;
+                        if (duombaze->ApplyReplication(walRecord)) {
+                            last_applied_lsn = walRecord.lsn;
+                            // ACK Lyderiui.
+                            send_all(repl_socket, "ACK " + std::to_string(lsn) + "\n");
+                            got_any_replication = true;
+                        }
                     }
                     // Kiti pranešimai – nežinomi, tiesiog užloginam DEBUG lygiu.
                     else {

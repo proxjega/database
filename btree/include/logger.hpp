@@ -56,14 +56,14 @@ private:
     bool WriteRecordToStream(const WalRecord& record);
 
 public:
-    static constexpr size_t DEFAULT_SEGMENT_SIZE = 16UL * 1024UL * 1024UL;
+    static constexpr size_t DEFAULT_SEGMENT_SIZE = 16UL * 1024ULL;
 
     explicit WAL(const string &databaseName, size_t MaxSegmentSizeBytes = DEFAULT_SEGMENT_SIZE); // Default 16MB. Same as Postgres
 
     bool LogSet(const string &key, const string &value);
     bool LogDelete(const string &key);
 
-    bool LogWithLSN(uint64_t lsn, WalOperation operation, const string &key, const string &value = "");
+    bool LogWithLSN(WalRecord &walRecord);
 
     vector<WalRecord> ReadAll();
     vector<WalRecord> ReadFrom(const uint64_t &lsn);

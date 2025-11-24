@@ -1,4 +1,9 @@
 #include "common.hpp"
+#include "../btree/include/database.h"
+#include <chrono>
+#include <cstdint>
+#include <memory>
+#include <mutex>
 
 // Informacija apie vieną follower'io ryšį leader'yje.
 // Laikom socket'ą, iki kokio lsn follower'is patvirtino (ACK),
@@ -17,17 +22,10 @@ static std::mutex mtx;
 static std::condition_variable cv;
 
 // Pagrindinis key-value store lyderio atmintyje
-static std::unordered_map<std::string,std::string> kv;
-
-// WAL buferis atmintyje – visi įrašai, kurie buvo parašyti į WAL failą.
-// Follower'iams, kurie prisijungia vėliau, iš čia persiunčiam trūkstamus įrašus.
-static std::vector<WalRecord> logbuf;
+static std::unique_ptr<Database> duombaze;
 
 // Visų žinomų followerių sąrašas
 static std::vector<std::shared_ptr<FollowerConn>> followers;
-
-// Sekantis sekos numeris naujiems WAL įrašams (monotoniškai didėja)
-static std::atomic<uint64_t> next_lsn{1};
 
 // Kiek follower'ių ACK'ų reikia laikyti operaciją įvykusia (0 – nereikia nieko laukti)
 static int REQUIRED_ACKS = 0;
@@ -104,20 +102,21 @@ static void follower_thread(std::shared_ptr<FollowerConn> follower) {
     }
 
     // --- 2) Persiunčiam follower'iui visus logbuf įrašus, kurių jis neturi ---
-    {
-      std::unique_lock<std::mutex> lock(mtx);
-      for (const auto& walRecord : logbuf) {
-        if (walRecord.lsn > last_applied_lsn) {
-          std::string message = (walRecord.operation == WalOperation::SET)
-            ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n")
-            : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
-          if (!send_all(follower->follower_socket, message)) {
-            // Jei siuntimas nepavyksta – nutraukiam šitą follower'į
-            follower->is_alive = false;
-            return;
-          }
+    auto missingRecords = duombaze->GetWalRecordsSince(last_applied_lsn);
+      for (const auto& walRecord : missingRecords) {
+        std::string message = (walRecord.operation == WalOperation::SET)
+          ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n")
+          : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
+
+        if (!send_all(follower->follower_socket, message)) {
+          // Jei siuntimas nepavyksta – nutraukiam šitą follower'į
+          follower->is_alive = false;
+          return;
         }
       }
+
+    if (!missingRecords.empty()) {
+      follower->acked_upto_lsn = missingRecords.back().lsn;
     }
 
     // --- 3) Laukiame ACK pranešimų ---
@@ -199,7 +198,7 @@ static void accept_followers(uint16_t follower_port) {
 //  - pridedami į logbuf
 //  - išsiunčiami follower'iams (broadcast_walRecord)
 //  - jei REQUIRED_ACKS > 0, laukiama ACK'ų iš follower'ių
-static void serve_clients(uint16_t client_port, WAL &wal) {
+static void serve_clients(uint16_t client_port) {
   sock_t listen_socket = tcp_listen(client_port);
   if (listen_socket == NET_INVALID) {
     std::cerr << "Client listen failed\n";
@@ -216,7 +215,7 @@ static void serve_clients(uint16_t client_port, WAL &wal) {
     }
 
     // Kiekvienam klientui – atskiras handler'is threade
-    std::thread([client_socket, &wal]() {
+    std::thread([client_socket]() {
       try {
         std::string request_line;
 
@@ -229,82 +228,66 @@ static void serve_clients(uint16_t client_port, WAL &wal) {
 
           // --- SET/PUT <key> <value> ---
           if ((tokens[0] == "PUT" || tokens[0] == "SET") && tokens.size() >= 3) {
-            WalRecord walRecord;
-            {
-              // Kritinė sekcija – modifikuojam kv, logbuf ir next_lsn
-              std::lock_guard<std::mutex> lock(mtx);
+            uint64_t newLsn = 0;
+            WalRecord walRecord(newLsn, WalOperation::SET, tokens[1], tokens[2]);
 
-              walRecord.lsn = next_lsn++;  // naujas sekos numeris
+            newLsn = duombaze->ExecuteLogSetWithLSN(walRecord.key, walRecord.value);
+
+            if (newLsn > 0) {
+              walRecord.lsn = newLsn;
               walRecord.operation = WalOperation::SET;
               walRecord.key = tokens[1];
               walRecord.value = tokens[2];
 
-              // Atnaujinam lokalią būseną
-              kv[walRecord.key] = walRecord.value;
-              logbuf.push_back(walRecord);
-
-              // Parašom į WAL failą
-              wal.LogSet(walRecord.key, walRecord.value);
-
               // Broadcastinam follower'iams
               broadcast_walRecord(walRecord);
-            }
 
-            // Jei turim reikalavimą gauti ACK iš followerių – palaukiam
-            if (REQUIRED_ACKS > 0) {
-              std::unique_lock<std::mutex> lock(mtx);
-              cv.wait_for(
-                lock,
-                std::chrono::seconds(3),  // max laukimo laikas
-                [&] { return count_acks(walRecord.lsn) >= static_cast<size_t>(REQUIRED_ACKS); }
-              );
+              if (REQUIRED_ACKS > 0) {
+                std::unique_lock<std::mutex> lock(mtx);
+                cv.wait_for(lock, std::chrono::seconds(3), [&] {
+                  return count_acks(newLsn) >= static_cast<size_t>(REQUIRED_ACKS);
+                });
+              }
+              // Atsakymas klientui – OK ir lsn numeris
+              send_all(client_socket, "OK " + std::to_string(walRecord.lsn) + "\n");
+            } else {
+              send_all(client_socket, "ERR_WRITE_FAILED\n");
             }
-
-            // Atsakymas klientui – OK ir lsn numeris
-            send_all(client_socket, "OK " + std::to_string(walRecord.lsn) + "\n");
           }
           // --- DEL <key> ---
           else if (tokens[0] == "DEL" && tokens.size() >= 2) {
-            WalRecord walRecord;
-            {
-              std::lock_guard<std::mutex> lock(mtx);
+            uint64_t newLsn = 0;
+            WalRecord walRecord(newLsn, WalOperation::DELETE, tokens[1]);
 
-              walRecord.lsn = next_lsn++;
-              walRecord.operation  = WalOperation::DELETE;
+            newLsn = duombaze->ExecuteLogDeleteWithLSN((walRecord.key));
+
+            if (newLsn > 0) {
+              walRecord.lsn = newLsn;
+              walRecord.operation = WalOperation::DELETE;
               walRecord.key = tokens[1];
 
-              // Išmetam iš lokalaus kv store
-              kv.erase(walRecord.key);
-              logbuf.push_back(walRecord);
-
-              // Parašom į WAL failą
-              wal.LogDelete(walRecord.key);
-
-              // Išsiunčiam follower'iams
+              // Broadcastinam follower'iams
               broadcast_walRecord(walRecord);
-            }
 
-            // Vėl – jei reikia ACK'ų, palaukiam
-            if (REQUIRED_ACKS > 0) {
-              std::unique_lock<std::mutex> lock(mtx);
-              cv.wait_for(
-                lock,
-                std::chrono::seconds(3),
-                [&] { return count_acks(walRecord.lsn) >= static_cast<size_t>(REQUIRED_ACKS); }
-              );
+              if (REQUIRED_ACKS > 0) {
+                std::unique_lock<std::mutex> lock(mtx);
+                cv.wait_for(lock, std::chrono::seconds(3), [&] {
+                  return count_acks(newLsn) >= static_cast<size_t>(REQUIRED_ACKS);
+                });
+              }
+              // Atsakymas klientui – OK ir lsn numeris
+              send_all(client_socket, "OK " + std::to_string(walRecord.lsn) + "\n");
+            } else {
+              send_all(client_socket, "ERR_WRITE_FAILED\n");
             }
-
-            send_all(client_socket, "OK " + std::to_string(walRecord.lsn) + "\n");
           }
           // --- GET <key> ---
           else if (tokens[0] == "GET" && tokens.size() >= 2) {
-            std::lock_guard<std::mutex> lock(mtx);
-            auto kv_iter = kv.find(tokens[1]);
-
-            if (kv_iter == kv.end()) {
+            auto result = duombaze->Get(tokens[1]);
+            if (!result.has_value()) {
               send_all(client_socket, "NOT_FOUND\n");
             } else {
-              send_all(client_socket, "VALUE " + kv_iter->second + "\n");
+              send_all(client_socket, "VALUE " + result->value + "\n");
             }
           }
           // Neatpažinta komanda – grąžinam error'ą su usage
@@ -343,7 +326,7 @@ int main(int argc, char** argv) {
 
     uint16_t client_port   = static_cast<uint16_t>(client_port_i);
     uint16_t follower_port = static_cast<uint16_t>(follower_port_i);
-    std::string db_name   = argv[3];
+    std::string dbName   = argv[3];
 
     REQUIRED_ACKS = std::stoi(argv[4]);
     REQUIRED_ACKS = std::max(REQUIRED_ACKS, 0);
@@ -357,28 +340,12 @@ int main(int argc, char** argv) {
       std::string("[Leader] starting on ") + leader_host +
       ":" + std::to_string(client_port) +
       " repl_port=" + std::to_string(follower_port) +
-      " db_name=" + db_name +
+      " dbName=" + dbName +
       " required_acks=" + std::to_string(REQUIRED_ACKS)
     );
 
-    // --- Atkuriam būseną iš esamo WAL failo (jei toks yra) ---
-    WAL wal(db_name);
-
-    {
-      std::lock_guard<std::mutex> lock(mtx);
-      auto records = wal.ReadAll();
-
-      // Pritaikom visus senus WAL įrašus į kv ir logbuf
-      for (auto& walRecord : records) {
-        if (walRecord.operation == WalOperation::SET) {
-          kv[walRecord.key] = walRecord.value;
-        } else {
-          kv.erase(walRecord.key);
-        }
-
-        logbuf.push_back(walRecord);
-      }
-    }
+    // Inicializuojame duomenų bazę.
+    duombaze = std::make_unique<Database>(dbName);
 
     // Paleidžiam periodinį "[Leader] host port" log'ą kas Consts::SLEEP_TIME_MS s
     std::thread announce_thr(leader_announce_thread, leader_host, client_port);
@@ -388,7 +355,7 @@ int main(int argc, char** argv) {
     std::thread follower_accept_thread(accept_followers, follower_port);
 
     // Pagrindinis thread'as aptarnauja klientus (SET/GET/DEL)
-    serve_clients(client_port, wal);
+    serve_clients(client_port);
 
     // Jei kada nors serve_clients baigtųsi (teoriškai ne), palaukiam follower_accept_thread
     follower_accept_thread.join();
