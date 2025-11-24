@@ -1,6 +1,5 @@
-#include <stdexcept>
-#include <fstream>
 #include <algorithm>
+#include <stdexcept>
 #include <utility>
 #include <iostream>
 #include <sstream>
@@ -205,6 +204,22 @@ WalRecord WAL::ParseWalRecord(const string &line) {
     return record;
 }
 
+bool WAL::WriteRecordToStream(const WalRecord& record) {
+    auto startPos = this->walFile.tellp();
+
+    this->walFile << record.lsn << "|";
+    if (record.operation == WalOperation::SET) {
+        this->walFile << "SET|" << record.key << "|" << record.value << "\n";
+    } else {
+        this->walFile << "DELETE|" << record.key << "\n";
+    }
+    this->walFile.flush();
+
+    auto endPos = this->walFile.tellp();
+    this->currentSegmentSize += (endPos - startPos);
+    return !this->walFile.fail();
+}
+
 /**
  * @brief Logs SET operation to WAL.
  * @param key raktas
@@ -274,6 +289,24 @@ bool WAL::LogDelete(const string &key) {
     this->currentSegmentSize += (endPos - startPos);
 
     return !this->walFile.fail();
+}
+
+bool WAL::LogWithLSN(uint64_t lsn, WalOperation operation, const string &key, const string &value) {
+    if (!this->walFile.is_open()) {
+        return false;
+    }
+
+    if (this->ShouldRotate()) {
+        if (!this->RotateWAL()) {
+            return false;
+        }
+    }
+
+    // Update internal sequence number to track the highest seen LSN
+    this->currentSequenceNumber = std::max(lsn, this->currentSequenceNumber);
+
+    WalRecord record(lsn, operation, key, value);
+    return WriteRecordToStream(record);
 }
 
 /**
@@ -350,8 +383,7 @@ vector<WalRecord> WAL::ReadFrom(const uint64_t &lsn) {
  * @return true, jei yra bent vienas įrašas
 */
 bool WAL::HasPendingRecords() {
-    auto records = this->ReadAll();
-    return !records.empty();
+    return !this->ReadAll().empty();
 }
 
 /**

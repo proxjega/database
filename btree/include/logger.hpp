@@ -53,6 +53,8 @@ private:
     uint64_t GetNextSequenceNumber();
     static WalRecord ParseWalRecord(const string &line);
 
+    bool WriteRecordToStream(const WalRecord& record);
+
 public:
     static constexpr size_t DEFAULT_SEGMENT_SIZE = 16UL * 1024UL * 1024UL;
 
@@ -60,6 +62,8 @@ public:
 
     bool LogSet(const string &key, const string &value);
     bool LogDelete(const string &key);
+
+    bool LogWithLSN(uint64_t lsn, WalOperation operation, const string &key, const string &value = "");
 
     vector<WalRecord> ReadAll();
     vector<WalRecord> ReadFrom(const uint64_t &lsn);

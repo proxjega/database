@@ -135,9 +135,20 @@ static uint64_t parse_last_seq_from_file(const std::string& path) {
   }
 }
 
+static std::string my_db_name() {
+    return "node" + std::to_string(g_self_id);
+}
+
 // Apskaičiuoja paskutinį seq šio node'o loge (kviečia parse_last_seq_from_file)
 static uint64_t compute_my_last_seq() {
-  return parse_last_seq_from_file(my_log_file());
+    try {
+        // Instantiate WAL to read state
+        // Note: This works because WAL constructor reads all segments to find last LSN
+        WAL wal(my_db_name());
+        return wal.GetCurrentSequenceNumber();
+    } catch (...) {
+        return 0;
+    }
 }
 
 // -------- Child process utils --------
@@ -625,7 +636,7 @@ static void role_process_manager() {
   NodeState last_role = NodeState::FOLLOWER;
   int       last_effective_leader = 0;
 
-  std::string log_file = my_log_file();
+  std::string dbName = my_db_name();
 
   while (g_cluster_state.alive) {
     NodeState role = g_cluster_state.state.load();
@@ -643,14 +654,14 @@ static void role_process_manager() {
         std::string cmd = ".\\leader.exe " +
                           std::to_string(CLIENT_PORT) + " " +
                           std::to_string(REPL_PORT)   + " " +
-                          log_file + " 1"+
+                          dbName + " 1"+
                       g_self_info.host;
 #else
         // Linux/macOS komanda leader binarui paleisti
         std::string cmd = "./leader " +
                           std::to_string(CLIENT_PORT) + " " +
                           std::to_string(REPL_PORT)   + " " +
-                          log_file + " 1 " +
+                          dbName + " 1 " +
                           g_self_info.host;
 #endif
         run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
@@ -668,7 +679,7 @@ static void role_process_manager() {
         stop_process(g_child);
         const NodeInfo* leader_node = getNode(effective_leader);
         if (leader_node != nullptr) {
-          const std::string &follower_log  = log_file;                           // WAL failas followeriui
+          const std::string &follower_log  = dbName;                           // WAL failas followeriui
           std::string follower_snap = "f" + std::to_string(g_self_id) + ".snap"; // snapshot failas
           uint16_t    read_port     = FOLLOWER_READ_PORT(g_self_id);      // read-only API portas
 #ifdef _WIN32
@@ -760,8 +771,9 @@ int main(int argc, char** argv) {
     start_election();
 
     // Pagrindinis thread'as tiesiog miega – visa logika vyksta threade.
-    while (true)
+    while (true) {
       std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
 
     return 0;
   } catch (const std::exception& ex) {
