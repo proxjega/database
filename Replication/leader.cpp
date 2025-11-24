@@ -1,5 +1,3 @@
-#include <algorithm>
-
 #include "common.hpp"
 
 // Informacija apie vieną follower'io ryšį leader'yje.
@@ -201,18 +199,11 @@ static void accept_followers(uint16_t follower_port) {
 //  - pridedami į logbuf
 //  - išsiunčiami follower'iams (broadcast_walRecord)
 //  - jei REQUIRED_ACKS > 0, laukiama ACK'ų iš follower'ių
-static void serve_clients(uint16_t client_port, const std::string& wal_path) {
+static void serve_clients(uint16_t client_port, WAL &wal) {
   sock_t listen_socket = tcp_listen(client_port);
   if (listen_socket == NET_INVALID) {
     std::cerr << "Client listen failed\n";
     log_line(LogLevel::ERROR, "Client listen failed on port " + std::to_string(client_port));
-    return;
-  }
-
-  // Atidarom WAL failą papildymui – visus naujus įrašus rašysim čia
-  std::ofstream wal_stream(wal_path, std::ios::app);
-  if (!wal_stream.is_open()) {
-    log_line(LogLevel::ERROR, "Failed to open WAL file: " + wal_path);
     return;
   }
 
@@ -225,7 +216,7 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
     }
 
     // Kiekvienam klientui – atskiras handler'is threade
-    std::thread([client_socket, &wal_stream]() {
+    std::thread([client_socket, &wal]() {
       try {
         std::string request_line;
 
@@ -243,9 +234,9 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
               // Kritinė sekcija – modifikuojam kv, logbuf ir next_lsn
               std::lock_guard<std::mutex> lock(mtx);
 
-              walRecord.lsn   = next_lsn++;  // naujas sekos numeris
-              walRecord.operation    = WalOperation::SET;
-              walRecord.key   = tokens[1];
+              walRecord.lsn = next_lsn++;  // naujas sekos numeris
+              walRecord.operation = WalOperation::SET;
+              walRecord.key = tokens[1];
               walRecord.value = tokens[2];
 
               // Atnaujinam lokalią būseną
@@ -253,7 +244,7 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
               logbuf.push_back(walRecord);
 
               // Parašom į WAL failą
-              wal_append(wal_stream, walRecord);
+              wal.LogSet(walRecord.key, walRecord.value);
 
               // Broadcastinam follower'iams
               broadcast_walRecord(walRecord);
@@ -287,7 +278,7 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
               logbuf.push_back(walRecord);
 
               // Parašom į WAL failą
-              wal_append(wal_stream, walRecord);
+              wal.LogDelete(walRecord.key);
 
               // Išsiunčiam follower'iams
               broadcast_walRecord(walRecord);
@@ -352,7 +343,7 @@ int main(int argc, char** argv) {
 
     uint16_t client_port   = static_cast<uint16_t>(client_port_i);
     uint16_t follower_port = static_cast<uint16_t>(follower_port_i);
-    std::string wal_path   = argv[3];
+    std::string db_name   = argv[3];
 
     REQUIRED_ACKS = std::stoi(argv[4]);
     REQUIRED_ACKS = std::max(REQUIRED_ACKS, 0);
@@ -366,32 +357,27 @@ int main(int argc, char** argv) {
       std::string("[Leader] starting on ") + leader_host +
       ":" + std::to_string(client_port) +
       " repl_port=" + std::to_string(follower_port) +
-      " wal=" + wal_path +
+      " db_name=" + db_name +
       " required_acks=" + std::to_string(REQUIRED_ACKS)
     );
 
     // --- Atkuriam būseną iš esamo WAL failo (jei toks yra) ---
-
-    std::vector<WalRecord> previous_entries;
-    wal_load(wal_path, previous_entries);  // jei failo nėra, tiesiog liks tuščia
+    WAL wal(db_name);
 
     {
       std::lock_guard<std::mutex> lock(mtx);
-      uint64_t max_lsn = 0;
+      auto records = wal.ReadAll();
 
       // Pritaikom visus senus WAL įrašus į kv ir logbuf
-      for (auto& walRecord : previous_entries) {
-        if (walRecord.operation == WalOperation::SET)
+      for (auto& walRecord : records) {
+        if (walRecord.operation == WalOperation::SET) {
           kv[walRecord.key] = walRecord.value;
-        else
+        } else {
           kv.erase(walRecord.key);
+        }
 
         logbuf.push_back(walRecord);
-        max_lsn = std::max(max_lsn, walRecord.lsn);
       }
-
-      // next_lsn nustatom į 1 + max lsn, kad nenaudotume jau buvusių numerių
-      next_lsn = max_lsn + 1;
     }
 
     // Paleidžiam periodinį "[Leader] host port" log'ą kas Consts::SLEEP_TIME_MS s
@@ -402,7 +388,7 @@ int main(int argc, char** argv) {
     std::thread follower_accept_thread(accept_followers, follower_port);
 
     // Pagrindinis thread'as aptarnauja klientus (SET/GET/DEL)
-    serve_clients(client_port, wal_path);
+    serve_clients(client_port, wal);
 
     // Jei kada nors serve_clients baigtųsi (teoriškai ne), palaukiam follower_accept_thread
     follower_accept_thread.join();

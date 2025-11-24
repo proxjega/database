@@ -22,7 +22,7 @@
 // ---------- Logging ----------
 
 // Log lygiai – naudojami žinutės „svarbumui“ pažymėti.
-enum class LogLevel { DEBUG, INFO, WARN, ERROR };
+enum class LogLevel : uint8_t { DEBUG, INFO, WARN, ERROR };
 
 // Paverčia LogLevel į trumpą tekstinę žymę, pvz. "DEBUG", "INFO ", ...
 static inline const char* log_level_str(LogLevel lvl) {
