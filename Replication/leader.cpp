@@ -1,11 +1,13 @@
+#include <algorithm>
+
 #include "common.hpp"
 
 // Informacija apie vieną follower'io ryšį leader'yje.
-// Laikom socket'ą, iki kokio seq follower'is patvirtino (ACK),
+// Laikom socket'ą, iki kokio lsn follower'is patvirtino (ACK),
 // ir ar jis dar laikomas gyvu.
 struct FollowerConn {
   sock_t   follower_socket{NET_INVALID};
-  uint64_t acked_upto_seq{0};
+  uint64_t acked_upto_lsn{0};
   bool     is_alive{true};
 };
 
@@ -21,13 +23,13 @@ static std::unordered_map<std::string,std::string> kv;
 
 // WAL buferis atmintyje – visi įrašai, kurie buvo parašyti į WAL failą.
 // Follower'iams, kurie prisijungia vėliau, iš čia persiunčiam trūkstamus įrašus.
-static std::vector<WalEntry> logbuf;
+static std::vector<WalRecord> logbuf;
 
 // Visų žinomų followerių sąrašas
 static std::vector<std::shared_ptr<FollowerConn>> followers;
 
 // Sekantis sekos numeris naujiems WAL įrašams (monotoniškai didėja)
-static std::atomic<uint64_t> next_seq{1};
+static std::atomic<uint64_t> next_lsn{1};
 
 // Kiek follower'ių ACK'ų reikia laikyti operaciją įvykusia (0 – nereikia nieko laukti)
 static int REQUIRED_ACKS = 0;
@@ -36,12 +38,12 @@ static int REQUIRED_ACKS = 0;
 static void leader_announce_thread(const std::string& host, uint16_t client_port) {
   try {
     while (true) {
-      // Kas 15 sekundžių išspausdinam, kad šitas procesas yra leader'is
+      // Kas Consts::SLEEP_TIME_MS sekundžių išspausdinam, kad šitas procesas yra leader'is
       log_line(
         LogLevel::INFO,
         std::string("[Leader] ") + host + " " + std::to_string(client_port)
       );
-      std::this_thread::sleep_for(std::chrono::seconds(15));
+      std::this_thread::sleep_for(std::chrono::seconds(Consts::SLEEP_TIME_MS));
     }
   } catch (const std::exception& ex) {
     log_line(LogLevel::ERROR,
@@ -53,26 +55,29 @@ static void leader_announce_thread(const std::string& host, uint16_t client_port
 
 // Išsiunčia vieną WAL įrašą visiems aktyviems follower'iams.
 // Naudojama tiek naujiems įrašams (SET/DEL), tiek paleidimo metu replay'inant logbuf.
-static void broadcast_entry(const WalEntry& entry) {
+static void broadcast_walRecord(const WalRecord &walRecord) {
   std::string message;
-  if (entry.op == Op::SET)
-    message = "WRITE "  + std::to_string(entry.seq) + " " + entry.key + " " + entry.value + "\n";
-  else
-    message = "DELETE " + std::to_string(entry.seq) + " " + entry.key + "\n";
+  if (walRecord.operation == WalOperation::SET) {
+    message = "WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n";
+  } else {
+    message = "DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n";
+  }
 
   // Einam per visus follower'ius ir bandome siųsti
   for (auto& follower : followers) {
-    if (!follower->is_alive) continue;
+    if (!follower->is_alive) {
+      continue;
+    }
     if (!send_all(follower->follower_socket, message)) {
       // Jei siųsti nepavyko – follower'į laikom „nebegyvu“
       follower->is_alive = false;
-      log_line(LogLevel::WARN, "broadcast_entry: send failed to follower socket");
+      log_line(LogLevel::WARN, "broadcast_walRecord: send failed to follower socket");
     }
   }
 }
 
 // Kiekvienam follower'iui skirtas thread'as, kuris:
-// 1) Perskaito HELLO <last_seq> iš follower'io;
+// 1) Perskaito HELLO <last_lsn> iš follower'io;
 // 2) Nusiunčia jam trūkstamus WAL įrašus;
 // 3) Laukia iš jo ACK pranešimų.
 static void follower_thread(std::shared_ptr<FollowerConn> follower) {
@@ -91,11 +96,11 @@ static void follower_thread(std::shared_ptr<FollowerConn> follower) {
       return;
     }
 
-    uint64_t last_applied_seq = 0;
+    uint64_t last_applied_lsn = 0;
     try {
-      last_applied_seq = std::stoull(hello_parts[1]);  // follower'io paskutinis pritaikytas seq
+      last_applied_lsn = std::stoull(hello_parts[1]);  // follower'io paskutinis pritaikytas lsn
     } catch (...) {
-      log_line(LogLevel::WARN, "Bad seq in follower HELLO: " + hello_parts[1]);
+      log_line(LogLevel::WARN, "Bad lsn in follower HELLO: " + hello_parts[1]);
       follower->is_alive = false;
       return;
     }
@@ -103,11 +108,11 @@ static void follower_thread(std::shared_ptr<FollowerConn> follower) {
     // --- 2) Persiunčiam follower'iui visus logbuf įrašus, kurių jis neturi ---
     {
       std::unique_lock<std::mutex> lock(mtx);
-      for (const auto& entry : logbuf) {
-        if (entry.seq > last_applied_seq) {
-          std::string message = (entry.op == Op::SET)
-            ? ("WRITE "  + std::to_string(entry.seq) + " " + entry.key + " " + entry.value + "\n")
-            : ("DELETE " + std::to_string(entry.seq) + " " + entry.key + "\n");
+      for (const auto& walRecord : logbuf) {
+        if (walRecord.lsn > last_applied_lsn) {
+          std::string message = (walRecord.operation == WalOperation::SET)
+            ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n")
+            : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
           if (!send_all(follower->follower_socket, message)) {
             // Jei siuntimas nepavyksta – nutraukiam šitą follower'į
             follower->is_alive = false;
@@ -126,16 +131,16 @@ static void follower_thread(std::shared_ptr<FollowerConn> follower) {
         break;
       }
       auto tokens = split(recv_line_str, ' ');
-      // Tikimės formos: ACK <seq>
+      // Tikimės formos: ACK <lsn>
       if (tokens.size() == 2 && tokens[0] == "ACK") {
         try {
-          uint64_t ack_seq = std::stoull(tokens[1]);
-          // Atnaujinam, iki kokio seq follower'is yra atsilikęs / pasivijęs
-          follower->acked_upto_seq = std::max(follower->acked_upto_seq, ack_seq);
+          uint64_t ack_lsn = std::stoull(tokens[1]);
+          // Atnaujinam, iki kokio lsn follower'is yra atsilikęs / pasivijęs
+          follower->acked_upto_lsn = std::max(follower->acked_upto_lsn, ack_lsn);
           // Pranešam visiems, kas laukia ant condition_variable (pvz. klientų SET/DEL)
           cv.notify_all();
         } catch (...) {
-          log_line(LogLevel::WARN, "Bad ACK seq from follower: " + tokens[1]);
+          log_line(LogLevel::WARN, "Bad ACK lsn from follower: " + tokens[1]);
         }
       }
     }
@@ -146,13 +151,14 @@ static void follower_thread(std::shared_ptr<FollowerConn> follower) {
   }
 }
 
-// Suskaičiuoja, kiek follower'ių turi acked_upto_seq >= duotas seq.
+// Suskaičiuoja, kiek follower'ių turi acked_upto_lsn >= duotas lsn.
 // Naudojama tam, kad patikrinti ar surinkom pakankamai ACK'ų (REQUIRED_ACKS).
-static size_t count_acks(uint64_t seq) {
+static size_t count_acks(uint64_t lsn) {
   size_t acked_count = 0;
   for (auto& follower : followers) {
-    if (follower->is_alive && follower->acked_upto_seq >= seq)
+    if (follower->is_alive && follower->acked_upto_lsn >= lsn) {
       ++acked_count;
+    }
   }
   return acked_count;
 }
@@ -171,7 +177,9 @@ static void accept_followers(uint16_t follower_port) {
 
   while (true) {
     sock_t follower_socket = tcp_accept(listen_socket);
-    if (follower_socket == NET_INVALID) continue;
+    if (follower_socket == NET_INVALID) {
+      continue;
+    }
 
     auto follower_conn = std::make_shared<FollowerConn>();
     follower_conn->follower_socket = follower_socket;
@@ -191,7 +199,7 @@ static void accept_followers(uint16_t follower_port) {
 //  - įrašomi į WAL failą
 //  - įrašomi į kv
 //  - pridedami į logbuf
-//  - išsiunčiami follower'iams (broadcast_entry)
+//  - išsiunčiami follower'iams (broadcast_walRecord)
 //  - jei REQUIRED_ACKS > 0, laukiama ACK'ų iš follower'ių
 static void serve_clients(uint16_t client_port, const std::string& wal_path) {
   sock_t listen_socket = tcp_listen(client_port);
@@ -212,7 +220,9 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
 
   while (true) {
     sock_t client_socket = tcp_accept(listen_socket);
-    if (client_socket == NET_INVALID) continue;
+    if (client_socket == NET_INVALID) {
+      continue;
+    }
 
     // Kiekvienam klientui – atskiras handler'is threade
     std::thread([client_socket, &wal_stream]() {
@@ -222,29 +232,31 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
         // Skaitom užklausas iš kliento, kol jis kalba
         while (recv_line(client_socket, request_line)) {
           auto tokens = split(trim(request_line), ' ');
-          if (tokens.empty()) continue;
+          if (tokens.empty()) {
+             continue;
+          }
 
           // --- SET/PUT <key> <value> ---
           if ((tokens[0] == "PUT" || tokens[0] == "SET") && tokens.size() >= 3) {
-            WalEntry entry;
+            WalRecord walRecord;
             {
-              // Kritinė sekcija – modifikuojam kv, logbuf ir next_seq
+              // Kritinė sekcija – modifikuojam kv, logbuf ir next_lsn
               std::lock_guard<std::mutex> lock(mtx);
 
-              entry.seq   = next_seq++;  // naujas sekos numeris
-              entry.op    = Op::SET;
-              entry.key   = tokens[1];
-              entry.value = tokens[2];
+              walRecord.lsn   = next_lsn++;  // naujas sekos numeris
+              walRecord.operation    = WalOperation::SET;
+              walRecord.key   = tokens[1];
+              walRecord.value = tokens[2];
 
               // Atnaujinam lokalią būseną
-              kv[entry.key] = entry.value;
-              logbuf.push_back(entry);
+              kv[walRecord.key] = walRecord.value;
+              logbuf.push_back(walRecord);
 
               // Parašom į WAL failą
-              wal_append(wal_stream, entry);
+              wal_append(wal_stream, walRecord);
 
               // Broadcastinam follower'iams
-              broadcast_entry(entry);
+              broadcast_walRecord(walRecord);
             }
 
             // Jei turim reikalavimą gauti ACK iš followerių – palaukiam
@@ -253,32 +265,32 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
               cv.wait_for(
                 lock,
                 std::chrono::seconds(3),  // max laukimo laikas
-                [&] { return count_acks(entry.seq) >= static_cast<size_t>(REQUIRED_ACKS); }
+                [&] { return count_acks(walRecord.lsn) >= static_cast<size_t>(REQUIRED_ACKS); }
               );
             }
 
-            // Atsakymas klientui – OK ir seq numeris
-            send_all(client_socket, "OK " + std::to_string(entry.seq) + "\n");
+            // Atsakymas klientui – OK ir lsn numeris
+            send_all(client_socket, "OK " + std::to_string(walRecord.lsn) + "\n");
           }
           // --- DEL <key> ---
           else if (tokens[0] == "DEL" && tokens.size() >= 2) {
-            WalEntry entry;
+            WalRecord walRecord;
             {
               std::lock_guard<std::mutex> lock(mtx);
 
-              entry.seq = next_seq++;
-              entry.op  = Op::DEL;
-              entry.key = tokens[1];
+              walRecord.lsn = next_lsn++;
+              walRecord.operation  = WalOperation::DELETE;
+              walRecord.key = tokens[1];
 
               // Išmetam iš lokalaus kv store
-              kv.erase(entry.key);
-              logbuf.push_back(entry);
+              kv.erase(walRecord.key);
+              logbuf.push_back(walRecord);
 
               // Parašom į WAL failą
-              wal_append(wal_stream, entry);
+              wal_append(wal_stream, walRecord);
 
               // Išsiunčiam follower'iams
-              broadcast_entry(entry);
+              broadcast_walRecord(walRecord);
             }
 
             // Vėl – jei reikia ACK'ų, palaukiam
@@ -287,21 +299,22 @@ static void serve_clients(uint16_t client_port, const std::string& wal_path) {
               cv.wait_for(
                 lock,
                 std::chrono::seconds(3),
-                [&] { return count_acks(entry.seq) >= static_cast<size_t>(REQUIRED_ACKS); }
+                [&] { return count_acks(walRecord.lsn) >= static_cast<size_t>(REQUIRED_ACKS); }
               );
             }
 
-            send_all(client_socket, "OK " + std::to_string(entry.seq) + "\n");
+            send_all(client_socket, "OK " + std::to_string(walRecord.lsn) + "\n");
           }
           // --- GET <key> ---
           else if (tokens[0] == "GET" && tokens.size() >= 2) {
             std::lock_guard<std::mutex> lock(mtx);
             auto kv_iter = kv.find(tokens[1]);
 
-            if (kv_iter == kv.end())
+            if (kv_iter == kv.end()) {
               send_all(client_socket, "NOT_FOUND\n");
-            else
+            } else {
               send_all(client_socket, "VALUE " + kv_iter->second + "\n");
+            }
           }
           // Neatpažinta komanda – grąžinam error'ą su usage
           else {
@@ -331,8 +344,8 @@ int main(int argc, char** argv) {
 
     int client_port_i   = std::stoi(argv[1]);
     int follower_port_i = std::stoi(argv[2]);
-    if (client_port_i <= 0 || client_port_i > 65535 ||
-        follower_port_i <= 0 || follower_port_i > 65535) {
+    if (client_port_i <= 0 || client_port_i > Consts::MAX_PORT_NUMBER ||
+        follower_port_i <= 0 || follower_port_i > Consts::MAX_PORT_NUMBER) {
       std::cerr << "Invalid ports\n";
       return 1;
     }
@@ -342,7 +355,7 @@ int main(int argc, char** argv) {
     std::string wal_path   = argv[3];
 
     REQUIRED_ACKS = std::stoi(argv[4]);
-    if (REQUIRED_ACKS < 0) REQUIRED_ACKS = 0;  // neigiamos reikšmės – traktuojam kaip 0
+    REQUIRED_ACKS = std::max(REQUIRED_ACKS, 0);
 
     // host'as – optional 5-as argumentas, kad galėtum atspausdinti IP arba hostname'e
     std::string leader_host = (argc >= 6) ? std::string(argv[5]) : std::string("unknown-host");
@@ -359,29 +372,29 @@ int main(int argc, char** argv) {
 
     // --- Atkuriam būseną iš esamo WAL failo (jei toks yra) ---
 
-    std::vector<WalEntry> previous_entries;
+    std::vector<WalRecord> previous_entries;
     wal_load(wal_path, previous_entries);  // jei failo nėra, tiesiog liks tuščia
 
     {
       std::lock_guard<std::mutex> lock(mtx);
-      uint64_t max_seq = 0;
+      uint64_t max_lsn = 0;
 
       // Pritaikom visus senus WAL įrašus į kv ir logbuf
-      for (auto& entry : previous_entries) {
-        if (entry.op == Op::SET)
-          kv[entry.key] = entry.value;
+      for (auto& walRecord : previous_entries) {
+        if (walRecord.operation == WalOperation::SET)
+          kv[walRecord.key] = walRecord.value;
         else
-          kv.erase(entry.key);
+          kv.erase(walRecord.key);
 
-        logbuf.push_back(entry);
-        max_seq = std::max(max_seq, entry.seq);
+        logbuf.push_back(walRecord);
+        max_lsn = std::max(max_lsn, walRecord.lsn);
       }
 
-      // next_seq nustatom į 1 + max seq, kad nenaudotume jau buvusių numerių
-      next_seq = max_seq + 1;
+      // next_lsn nustatom į 1 + max lsn, kad nenaudotume jau buvusių numerių
+      next_lsn = max_lsn + 1;
     }
 
-    // Paleidžiam periodinį "[Leader] host port" log'ą kas 15 s
+    // Paleidžiam periodinį "[Leader] host port" log'ą kas Consts::SLEEP_TIME_MS s
     std::thread announce_thr(leader_announce_thread, leader_host, client_port);
     announce_thr.detach();  // thread'as gyvena iki proceso pabaigos
 
