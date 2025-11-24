@@ -20,7 +20,7 @@
 // -------- Logging helpers (naudojam per log_msg) --------
 
 // Lokalus log level (atskirtas nuo bendro LogLevel)
-enum class RunLogLevel { DEBUG, INFO, WARN, ERROR };
+enum class RunLogLevel : uint8_t { DEBUG, INFO, WARN, ERROR };
 
 // Paverčia RunLogLevel į string tag'ą, pvz. "[INFO] "
 static std::string lvl_tag(RunLogLevel lvl) {
@@ -109,17 +109,24 @@ static uint64_t parse_last_seq_from_file(const std::string& path) {
 
   std::string line, last;
   // Skaitom failą iki galo ir prisimenam paskutinę ne tuščią eilutę
-  while (std::getline(in, line))
-    if (!line.empty()) last = line;
+  while (std::getline(in, line)) {
+    if (!line.empty()) {
+      last = line;
+    }
+  }
 
-  if (last.empty()) return 0;
+  if (last.empty()) {
+    return 0;
+  }
 
   // Pirmiausia skaldom pagal tab'ą, jei nepavyksta – pagal tarpą
   auto parts = split(last, '\t');
   if (parts.empty()) {
     parts = split(last, ' ');
   }
-  if (parts.empty()) return 0;
+  if (parts.empty()) {
+    return 0;
+  }
 
   try {
     return (uint64_t)std::stoull(parts[0]);
@@ -146,8 +153,10 @@ struct Child {
 };
 
 // Patikrina ar child procesas vis dar gyvas.
-static bool child_alive(Child& child) {
-  if (!child.running) return false;
+static bool child_alive(Child &child) {
+  if (!child.running) {
+    return false;
+  }
 #ifdef _WIN32
   DWORD code = 0;
   if (GetExitCodeProcess(child.pi.hProcess, &code))
@@ -161,7 +170,7 @@ static bool child_alive(Child& child) {
 }
 
 // Paleidžia naują procesą su komandą cmd ir užpildo Child struktūrą.
-static bool start_process(const std::string& cmd, Child& child) {
+static bool start_process(const std::string &cmd, Child &child) {
 #ifdef _WIN32
   STARTUPINFOA si{};
   si.cb = sizeof(si);
@@ -195,7 +204,9 @@ static bool start_process(const std::string& cmd, Child& child) {
 
 // Saugiai stabdo vaiką (siunčia SIGTERM/SIGKILL arba TerminateProcess ant Windows).
 static void stop_process(Child& child) {
-  if (!child.running) return;
+  if (!child.running) {
+    return;
+  }
 #ifndef _WIN32
   if (child.pid > 0) {
     // Pirmiausia – švelniai SIGTERM
@@ -205,7 +216,9 @@ static void stop_process(Child& child) {
     for (int i = 0; i < 20; ++i) {
       int status = 0;
       pid_t r = waitpid(child.pid, &status, WNOHANG);
-      if (r == child.pid) break;
+      if (r == child.pid) {
+        break;
+      }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
@@ -271,9 +284,9 @@ static void handle_conn(sock_t client_socket) {
         // Lėtas „debounce“ effective_leader: reikia ~800ms nuoseklių HB,
         // kad priimtume naują leader'į.
         if (g_effective_leader != leader_id) {
-          if (g_leader_seen_since_ms == 0)
+          if (g_leader_seen_since_ms == 0) {
             g_leader_seen_since_ms = now_ms();
-          else if (now_ms() - g_leader_seen_since_ms >= 800) {
+          } else if (now_ms() - g_leader_seen_since_ms >= 800) {
             g_effective_leader     = leader_id;
             g_leader_seen_since_ms = 0;
           }
@@ -324,7 +337,7 @@ static void handle_conn(sock_t client_socket) {
       }
 
       // Grąžinam VOTE_RESP kandidatui per atskirą TCP jungtį
-      if (auto candidate_node = getNode(candidate_id)) {
+      if (const auto *candidate_node = getNode(candidate_id)) {
         sock_t s = tcp_connect(candidate_node->host, candidate_node->port);
         if (s != NET_INVALID) {
           send_all(
@@ -395,8 +408,9 @@ static void listen_loop() {
 
     while (g_cluster_state.alive) {
       sock_t client_socket = tcp_accept(listen_socket);
-      if (client_socket != NET_INVALID)
+      if (client_socket != NET_INVALID) {
         std::thread(handle_conn, client_socket).detach();
+      }
     }
 
     net_close(listen_socket);
@@ -457,8 +471,9 @@ static void leader_heartbeat() {
 static void start_election() {
   bool expected = false;
   // Uždedam „lock“, kad vienu metu tik vienas election galėtų būti.
-  if (!g_election_inflight.compare_exchange_strong(expected, true))
+  if (!g_election_inflight.compare_exchange_strong(expected, true)) {
     return;
+  }
 
   int new_term = g_current_term.load() + 1;
   g_current_term  = new_term;
@@ -481,7 +496,9 @@ static void start_election() {
   // reachable_nodes – tie, su kuriais pavyko užmegzti TCP jungtį
   int reachable_nodes = 1; // mes patys
   for (auto& node : CLUSTER) {
-    if (node.id == g_self_id) continue;
+    if (node.id == g_self_id) {
+      continue;
+    }
     sock_t s = tcp_connect(node.host, node.port);
     if (s != NET_INVALID) {
       reachable_nodes++;
@@ -496,7 +513,7 @@ static void start_election() {
   }
 
   // Reikalingas balsų skaičius = majority iš reachable_nodes
-  int required_votes = reachable_nodes / 2 + 1;
+  int required_votes = (reachable_nodes / 2) + 1;
 
   // Jeigu esam vienintelis reachable node – iškart tampam leader'iu.
   if (required_votes <= 1) {
@@ -650,8 +667,8 @@ static void role_process_manager() {
 
         stop_process(g_child);
         const NodeInfo* leader_node = getNode(effective_leader);
-        if (leader_node) {
-          std::string follower_log  = log_file;                           // WAL failas followeriui
+        if (leader_node != nullptr) {
+          const std::string &follower_log  = log_file;                           // WAL failas followeriui
           std::string follower_snap = "f" + std::to_string(g_self_id) + ".snap"; // snapshot failas
           uint16_t    read_port     = FOLLOWER_READ_PORT(g_self_id);      // read-only API portas
 #ifdef _WIN32
@@ -738,7 +755,7 @@ int main(int argc, char** argv) {
 
     // Nedidelis random „delay“ prieš pirmus rinkimus, kad node'ai nesusidubliuotų
     std::this_thread::sleep_for(
-      std::chrono::milliseconds(400 + (g_self_id * 123) % 400)
+      std::chrono::milliseconds(400 + ((g_self_id * 123) % 400))
     );
     start_election();
 

@@ -17,6 +17,7 @@
 #include <cerrno>
 #include <algorithm>
 #include <iomanip>
+#include "../btree/include/logger.hpp"
 
 // ---------- Logging ----------
 
@@ -34,12 +35,29 @@ static inline const char* log_level_str(LogLevel lvl) {
     return "UNKWN";
 }
 
+namespace Consts {
+    // Time related
+    static constexpr uint32_t MS_PER_SEC        = 1000;
+    static constexpr int      LOG_MS_WIDTH      = 3;    // Width for milliseconds in timestamp
+    static constexpr int      SLEEP_TIME_MS     = 15;
+
+    // Networking
+    static constexpr int      SOCKET_TIMEOUT_MS = 5000;
+    static constexpr int      WINSOCK_VER_MAJOR = 2;
+    static constexpr int      WINSOCK_VER_MINOR = 2;
+    static constexpr int      LISTEN_BACKLOG    = 16;   // Default backlog for tcp_listen
+    static constexpr int      NET_OPT_ENABLE    = 1;    // Value to enable socket options (setsockopt)
+    static constexpr size_t   RECV_CHUNK_SIZE   = 1;    // Bytes to read at a time in recv_line
+
+    static constexpr int      MAX_PORT_NUMBER = 65535;
+}
+
 // Sugeneruoja dabartinį laiko „timestamp“ (HH:MM:SS.mmm) – naudojamas log’ams.
 static inline std::string now_ts() {
     using namespace std::chrono;
     auto now = system_clock::now();
     auto tt  = system_clock::to_time_t(now);
-    auto ms  = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+    auto ms  = duration_cast<milliseconds>(now.time_since_epoch()) % Consts::MS_PER_SEC;
     std::tm tm{};
 #ifdef _WIN32
     localtime_s(&tm, &tt);
@@ -55,9 +73,9 @@ static inline std::string now_ts() {
 // Saugus log funkcijos „wrapper’is“ – su užraktu, kad keli thread’ai neliptų vienas ant kito.
 static inline void log_line(LogLevel lvl, const std::string& msg) {
     static std::mutex log_mx;
-    std::lock_guard<std::mutex> g(log_mx);
+    std::lock_guard<std::mutex> guard(log_mx);
     std::cerr << "[" << now_ts() << "][" << log_level_str(lvl) << "] "
-              << msg << std::endl;
+              << msg << "\n";
 }
 
 // ---------- Net/platform ----------
@@ -106,26 +124,30 @@ static inline void log_line(LogLevel lvl, const std::string& msg) {
 #endif
 
 // Bendra pagalbinė funkcija uždėti recv/send timeout’ą ms visose platformose.
-static inline void set_socket_timeouts(sock_t s, int timeout_ms) {
-  if (s == NET_INVALID || timeout_ms <= 0) return;
+static inline void set_socket_timeouts(sock_t sock, int timeout_ms) {
+  if (sock == NET_INVALID || timeout_ms <= 0) {
+    return;
+  }
 #ifdef _WIN32
   int tv = timeout_ms;
   setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
   setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 #else
   struct timeval tv{};
-  tv.tv_sec  = timeout_ms / 1000;
-  tv.tv_usec = (timeout_ms % 1000) * 1000;
-  setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-  setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+  tv.tv_sec  = timeout_ms / Consts::MS_PER_SEC;
+  tv.tv_usec = (timeout_ms % Consts::MS_PER_SEC) * Consts::MS_PER_SEC;
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+  setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 #endif
 }
 
 /* ===================== TCP helper functions ===================== */
 
 // Sukuria TCP „listen“ socket’ą ant duoto porto ir pradeda klausytis jungčių.
-static inline sock_t tcp_listen(uint16_t port, int backlog = 16) {
-  if (!net_init_once()) return NET_INVALID;
+static inline sock_t tcp_listen(uint16_t port, int backlog = Consts::LISTEN_BACKLOG) {
+  if (!net_init_once()) {
+    return NET_INVALID;
+  }
 
   sock_t listenSock = socket(AF_INET, SOCK_STREAM, 0);
   if (listenSock == NET_INVALID) {
@@ -133,7 +155,7 @@ static inline sock_t tcp_listen(uint16_t port, int backlog = 16) {
     return NET_INVALID;
   }
 
-  int reuseFlag = 1;
+  int reuseFlag = Consts::NET_OPT_ENABLE;
 #ifdef _WIN32
   setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseFlag, sizeof(reuseFlag));
 #else
@@ -173,7 +195,7 @@ static inline sock_t tcp_accept(sock_t listenSock) {
 #endif
   sock_t clientSock = accept(listenSock, (sockaddr*)&clientAddress, &addrLen);
   if (clientSock != NET_INVALID) {
-    set_socket_timeouts(clientSock, 5000); // 5s recv/send timeout
+    set_socket_timeouts(clientSock, Consts::SOCKET_TIMEOUT_MS); // 5s recv/send timeout
   }
   return clientSock;
 }
@@ -182,7 +204,8 @@ static inline sock_t tcp_accept(sock_t listenSock) {
 static inline sock_t tcp_connect(const std::string& host, uint16_t port) {
   net_init_once();
 
-  addrinfo hints{}, *result = nullptr;
+  addrinfo hints{};
+  addrinfo *result = nullptr;
   hints.ai_family   = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
 
@@ -199,12 +222,16 @@ static inline sock_t tcp_connect(const std::string& host, uint16_t port) {
   // Bandom prisijungti prie bet kurio iš gautų adresų
   for (addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
     clientSock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-    if (clientSock == NET_INVALID) continue;
+    if (clientSock == NET_INVALID) {
+      continue;
+    }
 
 #ifdef _WIN32
     if (connect(clientSock, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
 #else
-    if (connect(clientSock, rp->ai_addr, rp->ai_addrlen) == 0) break;
+    if (connect(clientSock, rp->ai_addr, rp->ai_addrlen) == 0) {
+      break;
+    }
 #endif
 
     // Jei prisijungti nepavyko – uždarom ir bandom kitą adresą.
@@ -252,8 +279,12 @@ static inline bool recv_line(sock_t socketHandle, std::string& out) {
       return false;
     }
 
-    if (ch == '\n') break;      // eilutės pabaiga
-    if (ch != '\r') out.push_back(ch); // ignoruojam '\r'
+    if (ch == '\n') {
+      break;      // eilutės pabaiga
+    }
+    if (ch != '\r') {
+      out.push_back(ch); // ignoruojam '\r'
+    }
   }
   return true;
 }
@@ -265,82 +296,88 @@ static inline std::string trim(const std::string& s) {
   size_t begin = 0;
   size_t end   = s.size();
 
-  while (begin < end && std::isspace((unsigned char)s[begin])) ++begin;
-  while (end > begin && std::isspace((unsigned char)s[end - 1])) --end;
+  while (begin < end && (std::isspace((unsigned char)s[begin]) != 0)) {
+    ++begin;
+  }
+
+  while (end > begin && (std::isspace((unsigned char)s[end - 1]) != 0)) {
+    --end;
+  }
 
   return s.substr(begin, end - begin);
 }
 
 // Suskaldo string’ą pagal vieną simbolį (delim) į vektorių dalių.
-static inline std::vector<std::string> split(const std::string& s, char delim) {
+static inline std::vector<std::string> split(const std::string& string, char delim) {
   std::vector<std::string> parts;
-  std::stringstream ss(s);
+  std::stringstream iss(string);
   std::string item;
-  while (std::getline(ss, item, delim)) parts.push_back(item);
+  while (std::getline(iss, item, delim)) {
+    parts.push_back(item);
+  }
   return parts;
 }
 
 /* ===================== WAL definitions & I/O ===================== */
 
-// Operacijų tipai WAL įraše: SET (įdėti/atnaujinti), DEL (ištrinti).
-enum class Op : uint8_t { SET = 1, DEL = 2 };
-
-// Vienas WAL (Write-Ahead Log) įrašas.
-struct WalEntry {
-  uint64_t    seq{};       // sekos numeris – monotoniškai didėjantis
-  Op          op{Op::SET}; // operacijos tipas
-  std::string key, value;  // raktas ir reikšmė (DEL atveju value gali būti tuščia)
-};
-
 // Paverčia Op į tekstą ("SET" arba "DEL").
-static inline std::string op_to_str(Op operation) {
-  return (operation == Op::SET) ? "SET" : "DEL";
+static inline std::string op_to_str(WalOperation walOperation) {
+  return (walOperation == WalOperation::SET) ? "SET" : "DEL";
 }
 
 // Paverčia tekstą atgal į Op (ne DEL laikome SET).
-static inline Op str_to_op(const std::string& opStr) {
-  return (opStr == "DEL") ? Op::DEL : Op::SET;
+static inline WalOperation str_to_op(const std::string& opStr) {
+  return (opStr == "DELETE") ? WalOperation::DELETE : WalOperation::SET;
 }
 
 // Prideda vieną įrašą į atidarytą WAL failą (tekstu, tab’ais atskyrus laukus).
-static inline void wal_append(std::ofstream& walStream, const WalEntry& entry) {
-  walStream << entry.seq << '\t'
-            << op_to_str(entry.op) << '\t'
-            << entry.key << '\t'
-            << entry.value << '\n';
+static inline void wal_append(std::ofstream& walStream, const WalRecord& walRecord) {
+  walStream << walRecord.lsn << '\t'
+            << op_to_str(walRecord.operation) << '\t'
+            << walRecord.key << '\t'
+            << walRecord.value << '\n';
   walStream.flush(); // iškart išrašome – saugiau (mažiau praradimų avarijos atveju)
 }
 
 // Perskaito visą WAL failą iš 'path' į outEntries vektorių.
 // Grąžina true, jei failą pavyko atidaryti ir nuskaitėm (net jei eilės buvo blogos).
-static inline bool wal_load(const std::string& path, std::vector<WalEntry>& outEntries) {
+static inline bool wal_load(const std::string& path, std::vector<WalRecord>& outEntries) {
   std::ifstream in(path);
-  if (!in.good()) return false; // jei failo nėra – tiesiog false.
+  if (!in.good()) {
+    return false; // jei failo nėra – tiesiog false.
+  }
 
   std::string line;
   while (std::getline(in, line)) {
-    if (line.empty()) continue;
+    if (line.empty()) {
+      continue;
+    }
 
     std::istringstream lineStream(line);
-    std::string seqStr, opStr;
-    WalEntry entry;
+    std::string seqStr;
+    std::string opStr;
+    WalRecord walRecord;
 
     // Eilės formatas: seq \t op \t key \t value
-    if (!std::getline(lineStream, seqStr, '\t')) continue;
-    if (!std::getline(lineStream, opStr,  '\t')) continue;
-    std::getline(lineStream, entry.key,   '\t');
-    std::getline(lineStream, entry.value);
+    if (!std::getline(lineStream, seqStr, '\t')) {
+      continue;
+    }
+    if (!std::getline(lineStream, opStr,  '\t')) {
+      continue;
+    }
+    std::getline(lineStream, walRecord.key,   '\t');
+    std::getline(lineStream, walRecord.value);
 
     try {
-      entry.seq = std::stoull(seqStr);
+      walRecord.lsn = std::stoull(seqStr);
     } catch (...) {
       // Jei sekos numeris sugadintas – praleidžiam eilutę.
       log_line(LogLevel::WARN, "Bad seq in WAL line: " + line);
       continue;
     }
 
-    entry.op  = str_to_op(opStr);
-    outEntries.push_back(std::move(entry));
+    walRecord.operation  = str_to_op(opStr);
+    outEntries.push_back(std::move(walRecord));
   }
   return true;
 }

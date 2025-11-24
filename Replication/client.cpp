@@ -57,7 +57,7 @@ static bool do_request_follow_redirect(const std::string& initialHost,
       responseParts[0] == "REDIRECT" &&
       responseParts.size() >= 3) {
 
-    std::string redirectHost = responseParts[1];
+    const std::string &redirectHost = responseParts[1];
     uint16_t redirectPort = static_cast<uint16_t>(std::stoi(responseParts[2]));
 
     net_close(socketMain);
@@ -80,11 +80,11 @@ static bool do_request_follow_redirect(const std::string& initialHost,
     std::cout << redirectedResponse << "\n";
     net_close(socketRedirect);
     return true;
-  } else {
-    std::cout << responseLine << "\n";
-    net_close(socketMain);
-    return true;
   }
+
+  std::cout << responseLine << "\n";
+  net_close(socketMain);
+  return true;
 }
 
 /**
@@ -96,7 +96,9 @@ static bool split_host_port(const std::string& hostPortStr,
                             std::string& hostOut,
                             uint16_t& portOut) {
   auto colonPos = hostPortStr.find(':');
-  if (colonPos == std::string::npos) return false;
+  if (colonPos == std::string::npos) {
+    return false;
+  }
 
   hostOut = hostPortStr.substr(0, colonPos);
   portOut = static_cast<uint16_t>(std::stoi(hostPortStr.substr(colonPos + 1)));
@@ -115,21 +117,23 @@ static bool split_host_port(const std::string& hostPortStr,
  * @param leaderHostOut – čia įrašomas aptiktas lyderio host.
  * @return true, jei pavyko rasti; false – jei nepavyko.
  */
-static bool detect_leader_host(std::string& leaderHostOut) {
+static bool detect_leader_host(std::string &leaderHostOut) {
   // 1) Bandome per follower read-only portus ir REDIRECT
   for (auto& node : CLUSTER) {
     uint16_t fport = FOLLOWER_READ_PORT(node.id);
-    sock_t s = tcp_connect(node.host, fport);
-    if (s == NET_INVALID) continue;
-
-    // bet kokia ne-GET komanda followeriui turi grąžinti REDIRECT
-    send_all(s, "SET __probe__ 1\n");
-    std::string line;
-    if (!recv_line(s, line)) {
-      net_close(s);
+    sock_t sock = tcp_connect(node.host, fport);
+    if (sock == NET_INVALID) {
       continue;
     }
-    net_close(s);
+
+    // bet kokia ne-GET komanda followeriui turi grąžinti REDIRECT
+    send_all(sock, "SET __probe__ 1\n");
+    std::string line;
+    if (!recv_line(sock, line)) {
+      net_close(sock);
+      continue;
+    }
+    net_close(sock);
 
     auto parts = split(trim(line), ' ');
     if (parts.size() >= 3 && parts[0] == "REDIRECT") {
@@ -141,7 +145,9 @@ static bool detect_leader_host(std::string& leaderHostOut) {
   // 2) Fallback – žiūrim, kuris host'as klauso CLIENT_PORT
   for (auto& node : CLUSTER) {
     sock_t s = tcp_connect(node.host, CLIENT_PORT);
-    if (s == NET_INVALID) continue;
+    if (s == NET_INVALID) {
+      continue;
+    }
     // jei prisijungėm prie 7001 – laikom, kad ten leader
     net_close(s);
     leaderHostOut = node.host;
@@ -163,7 +169,9 @@ int main(int argc, char** argv) {
     // Išspausdinam visus CLUSTER host'us, prie leader – LEADER
     for (auto& node : CLUSTER) {
       std::cout << node.host;
-      if (node.host == leaderHost) std::cout << " LEADER";
+      if (node.host == leaderHost) {
+        std::cout << " LEADER";
+      }
       std::cout << "\n";
     }
     return 0;
@@ -194,21 +202,21 @@ int main(int argc, char** argv) {
            ) ? 0 : 1;
   }
   // SET / PUT – rašo į lyderį (užklausos forma: "SET key value")
-  else if ((command == "SET" || command == "PUT") && argc >= 6) {
+  if ((command == "SET" || command == "PUT") && argc >= 6) {
     return do_request_follow_redirect(
              leaderHost, leaderPort,
              "SET " + std::string(argv[4]) + " " + std::string(argv[5])
            ) ? 0 : 1;
   }
   // DEL – trina key per lyderį
-  else if (command == "DEL" && argc >= 5) {
+  if (command == "DEL" && argc >= 5) {
     return do_request_follow_redirect(
              leaderHost, leaderPort,
              "DEL " + std::string(argv[4])
            ) ? 0 : 1;
   }
   // GETFF – "forward": eik tiesiai į nurodytą follower host:port
-  else if (command == "GETFF" && argc >= 6) {
+  if (command == "GETFF" && argc >= 6) {
     std::string followerHost;
     uint16_t followerPort;
     if (!split_host_port(argv[5], followerHost, followerPort)) {
@@ -221,7 +229,7 @@ int main(int argc, char** argv) {
            ) ? 0 : 1;
   }
   // GETFB – "fallback": pirma bando followerį, po to lyderį
-  else if (command == "GETFB" && argc >= 6) {
+  if (command == "GETFB" && argc >= 6) {
     std::string followerHost;
     uint16_t followerPort;
     if (!split_host_port(argv[5], followerHost, followerPort)) {
@@ -245,10 +253,10 @@ int main(int argc, char** argv) {
                    "GET " + std::string(argv[4])
                  ) ? 0 : 1;
         }
-        else if (followerReply.rfind("REDIRECT ", 0) == 0) {
+        if (followerReply.rfind("REDIRECT ", 0) == 0) {
           auto parts = split(trim(followerReply), ' ');
           if (parts.size() >= 3) {
-            std::string redirectHost = parts[1];
+            const std::string &redirectHost = parts[1];
             uint16_t redirectPort =
               static_cast<uint16_t>(std::stoi(parts[2]));
 

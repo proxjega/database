@@ -1,4 +1,5 @@
 #include "common.hpp"
+#include <cstdint>
 
 // Statinė informacija apie vieną klasterio mazgą.
 struct NodeInfo {
@@ -10,9 +11,9 @@ struct NodeInfo {
 // Fiksuotas klasterio narių sąrašas.
 static NodeInfo CLUSTER[] = {
     {1, "127.0.0.1", 8001},  // node1
-    {2, "127.0.0.1",  8002},  // node2
-    {3, "127.0.0.1",  8003},  // node3
-    {4, "127.0.0.1",  8004},  // node4
+    {2, "127.0.0.2",  8002},  // node2
+    {3, "127.0.0.3",  8003},  // node3
+    {4, "127.0.0.4",  8004},  // node4
 };
 
 // Lyderio atviri prievadai.
@@ -31,7 +32,7 @@ static constexpr int HEARTBEAT_TIMEOUT_MS  = 1500;  // po kiek laikyti leader'į
 static constexpr int ELECTION_TIMEOUT_MS   = 1200;  // minimalus laukimas iki rinkimų starto
 
 // Mazgo būsena Raft stiliaus protokole.
-enum class NodeState { FOLLOWER, CANDIDATE, LEADER };
+enum class NodeState : uint8_t { FOLLOWER, CANDIDATE, LEADER };
 
 // Bendras lokalaus mazgo klasterio stovis.
 struct ClusterState {
@@ -46,13 +47,15 @@ static inline void log_msg(ClusterState& clusterState,
                            int selfNodeId,
                            const std::string& message) {
     std::lock_guard<std::mutex> lock(clusterState.cout_mx);
-    std::cout << "[node " << selfNodeId << "] " << message << std::endl;
+    std::cout << "[node " << selfNodeId << "] " << message << "\n";
 }
 
 // Suranda NodeInfo pagal mazgo ID arba grąžina nullptr, jei tokio nėra.
 static inline const NodeInfo* getNode(int nodeId) {
-    for (auto& node : CLUSTER)
-        if (node.id == nodeId)
+    for (auto& node : CLUSTER) {
+        if (node.id == nodeId) {
             return &node;
+        }
+    }
     return nullptr;
 }

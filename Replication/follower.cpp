@@ -1,9 +1,9 @@
 #include "common.hpp"
+#include <algorithm>
 #include <unordered_set>
 #include <unordered_map>
 #include <thread>
 #include <chrono>
-#include <stdexcept>
 
 // Paprastas logger'is šitam faile – tik su "Follower" prefiksu, kad atskirt nuo kitų komponentų.
 static void flog(LogLevel lvl, const std::string& msg) {
@@ -28,11 +28,11 @@ static std::unordered_map<std::string, std::string> kv_store;
 static uint64_t last_applied_seq = 0;
 
 // Rinkinys su visais jau pritaikytais seq numeriais (naudojam greitam patikrinimui).
-static std::unordered_set<uint64_t> applied_seq_numbers;
+static std::unordered_set<uint64_t> applied_lsn_numbers;
 
-// Žemėlapis seq -> WalEntry. Saugo pilną įrašo turinį, kad būtų galima aptikti konfliktus
+// Žemėlapis seq -> WalRecord. Saugo pilną įrašo turinį, kad būtų galima aptikti konfliktus
 // (kai leader'is su tuo pačiu seq atsiunčia kažką kitą).
-static std::unordered_map<uint64_t, WalEntry> applied_entries_by_seq;
+static std::unordered_map<uint64_t, WalRecord> applied_entries_by_lsn;
 
 // Informacija apie leader'į (naudojama REDIRECT atsakymui read-only serveryje).
 static std::string g_leader_host;
@@ -41,20 +41,20 @@ static constexpr uint16_t LEADER_CLIENT_PORT = 7001; // leader'io kliento API (S
 /* ========= Helpers ========= */
 
 // Pritaiko vieną WAL įrašą followerio in-memory būsenai.
-static void apply_entry(const WalEntry& entry) {
+static void apply_entry(const WalRecord& WalRecord) {
     // 1) pritaikom operaciją key-value žemėlapiui
-    if (entry.op == Op::SET)
-        kv_store[entry.key] = entry.value;  // SET – įrašom / atnaujinam reikšmę
-    else
-        kv_store.erase(entry.key);          // DEL – ištrinam raktą
+    if (WalRecord.operation == WalOperation::SET) {
+        kv_store[WalRecord.key] = WalRecord.value;  // SET – įrašom / atnaujinam reikšmę
+    } else {
+        kv_store.erase(WalRecord.key);          // DEL – ištrinam raktą
+    }
 
     // 2) atnaujinam paskutinį seq, jei šis įrašas naujesnis
-    if (entry.seq > last_applied_seq)
-        last_applied_seq = entry.seq;
+    last_applied_seq = std::max(WalRecord.lsn, last_applied_seq);
 
     // 3) įsimenam, kad šitas seq jau pritaikytas ir ką tiksliai padarėm
-    applied_seq_numbers.insert(entry.seq);
-    applied_entries_by_seq[entry.seq] = entry;
+    applied_lsn_numbers.insert(WalRecord.lsn);
+    applied_entries_by_lsn[WalRecord.lsn] = WalRecord;
 }
 
 /* ========= Read-only server (GET / REDIRECT) ========= */
@@ -76,10 +76,12 @@ static void read_only_server(uint16_t port) {
         // Begalinis ciklas – laukiam naujų klientų
         while (true) {
             sock_t client_socket = tcp_accept(listen_socket);
-            if (client_socket == NET_INVALID) continue;
+            if (client_socket == NET_INVALID) {
+                continue;
+            }
 
             // Nedidelis timeout, kad klientas neužkabintų ryšio amžinai
-            set_socket_timeouts(client_socket, 5000);
+            set_socket_timeouts(client_socket, Consts::SOCKET_TIMEOUT_MS);
 
             // Kiekvieną klientą aptarnaujam atskiram threade
             std::thread([client_socket]() {
@@ -89,16 +91,19 @@ static void read_only_server(uint16_t port) {
                     // Skaitom eiles iš kliento, kol jis kalba arba nutrūksta ryšys
                     while (recv_line(client_socket, line)) {
                         auto tokens = split(trim(line), ' ');
-                        if (tokens.empty()) continue;
+                        if (tokens.empty()) {
+                            continue;
+                        }
 
                         // Komanda: GET <key>
                         if (tokens.size() >= 2 && tokens[0] == "GET") {
                             const std::string& key = tokens[1];
                             auto it = kv_store.find(key);
-                            if (it == kv_store.end())
+                            if (it == kv_store.end()) {
                                 send_all(client_socket, "NOT_FOUND\n");
-                            else
+                            } else {
                                 send_all(client_socket, "VALUE " + it->second + "\n");
+                            }
                         } else {
                             // Bet kokia kita komanda – redirect į leader'į.
                             // Taip užtikrinam, kad followeris nekeičia būsenos.
@@ -159,7 +164,7 @@ int main(int argc, char** argv) {
                  std::string("invalid leader_follower_port: ") + argv[2]);
             return 1;
         }
-        if (portTmp <= 0 || portTmp > 65535) {
+        if (portTmp <= 0 || portTmp > Consts::MAX_PORT_NUMBER) {
             flog(LogLevel::ERROR,
                  "leader_follower_port out of range: " + std::to_string(portTmp));
             return 1;
@@ -186,7 +191,7 @@ int main(int argc, char** argv) {
                  std::string("invalid read_only_port: ") + argv[5]);
             return 1;
         }
-        if (roTmp <= 0 || roTmp > 65535) {
+        if (roTmp <= 0 || roTmp > Consts::MAX_PORT_NUMBER) {
             flog(LogLevel::ERROR,
                  "read_only_port out of range: " + std::to_string(roTmp));
             return 1;
@@ -205,7 +210,7 @@ int main(int argc, char** argv) {
 
         // --- 1) Atkuriam būseną iš WAL failo ---
 
-        std::vector<WalEntry> previous_entries;
+        std::vector<WalRecord> previous_entries;
         // Bandome užkrauti visus ankstesnius įrašus iš WAL failo
         if (!wal_load(wal_path, previous_entries)) {
             flog(LogLevel::WARN,
@@ -270,7 +275,7 @@ int main(int argc, char** argv) {
 
             // Jei prisijungėm – resetinam backoff'ą į bazinį
             backoff_ms = BASE_BACKOFF_MS;
-            set_socket_timeouts(repl_socket, 5000);
+            set_socket_timeouts(repl_socket, Consts::SOCKET_TIMEOUT_MS);
 
             // HELLO – nusiunčiam leader'iui savo paskutinį pritaikytą seq,
             // kad jis galėtų siųsti tik naujus įrašus.
@@ -331,7 +336,9 @@ int main(int argc, char** argv) {
 
                 try {
                     auto tokens = split(trim(line), ' ');
-                    if (tokens.empty()) continue;
+                    if (tokens.empty()) {
+                        continue;
+                    }
 
                     // --- WRITE seq key value ---
                     if (tokens[0] == "WRITE") {
@@ -342,32 +349,32 @@ int main(int argc, char** argv) {
 
                         got_any_replication = true;
 
-                        uint64_t seq = 0;
+                        uint64_t lsn = 0;
                         try {
-                            seq = std::stoull(tokens[1]);
+                            lsn = std::stoull(tokens[1]);
                         } catch (...) {
                             flog(LogLevel::ERROR,
-                                 "invalid seq in WRITE: " + tokens[1]);
+                                 "invalid lsn in WRITE: " + tokens[1]);
                             continue;
                         }
 
-                        // Jei šis seq jau buvo pritaikytas – tikrinam, ar sutampa turinys.
-                        auto it = applied_entries_by_seq.find(seq);
-                        if (it != applied_entries_by_seq.end()) {
-                            const WalEntry& old_entry = it->second;
+                        // Jei šis lsn jau buvo pritaikytas – tikrinam, ar sutampa turinys.
+                        auto it = applied_entries_by_lsn.find(lsn);
+                        if (it != applied_entries_by_lsn.end()) {
+                            const WalRecord& old_entry = it->second;
                             const std::string& key   = tokens[2];
                             const std::string& value = tokens[3];
 
                             // Jeigu turinys skiriasi – tai „FATAL“ konfliktas
                             // (leader'is bandytų „pakeisti praeitį“).
-                            if (old_entry.op  != Op::SET ||
+                            if (old_entry.operation  != WalOperation::SET ||
                                 old_entry.key != key ||
                                 old_entry.value != value) {
                                 flog(LogLevel::ERROR,
-                                     "FATAL seq conflict: seq=" +
-                                     std::to_string(seq) +
+                                     "FATAL lsn conflict: lsn=" +
+                                     std::to_string(lsn) +
                                      " old=(" +
-                                     (old_entry.op==Op::SET ? "SET " : "DEL ") +
+                                     (old_entry.operation == WalOperation::SET ? "SET " : "DELETE ") +
                                      old_entry.key + " " + old_entry.value +
                                      ") new=(SET " + key + " " + value + ")");
                             }
@@ -375,14 +382,14 @@ int main(int argc, char** argv) {
                             // Kadangi įrašas identiškas – pakartotinai jo nepritaikom,
                             // tik patvirtinam ACK.
                             send_all(repl_socket,
-                                     "ACK " + std::to_string(seq) + "\n");
+                                     "ACK " + std::to_string(lsn) + "\n");
                             continue;
                         }
 
-                        // Naujas seq – sukuriam WalEntry objektą
-                        WalEntry entry;
-                        entry.seq   = seq;
-                        entry.op    = Op::SET;
+                        // Naujas seq – sukuriam WalRecord objektą
+                        WalRecord entry;
+                        entry.lsn   = lsn;
+                        entry.operation = WalOperation::SET;
                         entry.key   = tokens[2];
                         entry.value = tokens[3];
 
@@ -392,7 +399,7 @@ int main(int argc, char** argv) {
 
                         // Patvirtinam lyderiui
                         send_all(repl_socket,
-                                 "ACK " + std::to_string(entry.seq) + "\n");
+                                 "ACK " + std::to_string(entry.lsn) + "\n");
                     }
                     // --- DELETE seq key ---
                     else if (tokens[0] == "DELETE") {
@@ -404,42 +411,42 @@ int main(int argc, char** argv) {
 
                         got_any_replication = true;
 
-                        uint64_t seq = 0;
+                        uint64_t lsn = 0;
                         try {
-                            seq = std::stoull(tokens[1]);
+                            lsn = std::stoull(tokens[1]);
                         } catch (...) {
                             flog(LogLevel::ERROR,
-                                 "invalid seq in DELETE: " + tokens[1]);
+                                 "invalid lsn in DELETE: " + tokens[1]);
                             continue;
                         }
 
-                        // Jei šis seq jau egzistuoja – tikrinam turinio atitikimą.
-                        auto it = applied_entries_by_seq.find(seq);
-                        if (it != applied_entries_by_seq.end()) {
-                            const WalEntry& old_entry = it->second;
+                        // Jei šis lsn jau egzistuoja – tikrinam turinio atitikimą.
+                        auto iterator = applied_entries_by_lsn.find(lsn);
+                        if (iterator != applied_entries_by_lsn.end()) {
+                            const WalRecord& old_entry = iterator->second;
                             const std::string& key = tokens[2];
 
-                            if (old_entry.op  != Op::DEL ||
+                            if (old_entry.operation  != WalOperation::DELETE ||
                                 old_entry.key != key) {
                                 flog(LogLevel::ERROR,
-                                     "FATAL seq conflict: seq=" +
-                                     std::to_string(seq) +
+                                     "FATAL seq conflict: lsn=" +
+                                     std::to_string(lsn) +
                                      " old=(" +
-                                     (old_entry.op==Op::SET ? "SET " : "DEL ") +
+                                     (old_entry.operation == WalOperation::SET ? "SET " : "DELETE ") +
                                      old_entry.key + " " + old_entry.value +
                                      ") new=(DEL " + key + ")");
                             }
 
                             // Turinyje jokio konflikto – tiesiog išsiunčiam ACK.
                             send_all(repl_socket,
-                                     "ACK " + std::to_string(seq) + "\n");
+                                     "ACK " + std::to_string(lsn) + "\n");
                             continue;
                         }
 
                         // Naujas DELETE įrašas
-                        WalEntry entry;
-                        entry.seq = seq;
-                        entry.op  = Op::DEL;
+                        WalRecord entry;
+                        entry.lsn = lsn;
+                        entry.operation  = WalOperation::DELETE;
                         entry.key = tokens[2];
 
                         // Pritaikom atmintyje ir įrašom į WAL
@@ -448,7 +455,7 @@ int main(int argc, char** argv) {
 
                         // ACK lyderiui
                         send_all(repl_socket,
-                                 "ACK " + std::to_string(entry.seq) + "\n");
+                                 "ACK " + std::to_string(entry.lsn) + "\n");
                     }
                     // Kiti pranešimai – nežinomi, tiesiog užloginam DEBUG lygiu.
                     else {
