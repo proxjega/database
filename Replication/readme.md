@@ -1,21 +1,21 @@
 Šis projektas įgyvendina **Leader–Follower replikuojamą Key-Value Store** su:
 
-- 🔁 **Raft-style leader election**
-- 📡 **WAL replication system**
-- 📦 **Leader-based writes (SET/DEL)**
-- 🔍 **Follower read replicas (eventually consistent)**
-- 🚨 **Automatic failover elections**
-- ↩️ **Client REDIRECT mechanizmu**
+-   🔁 **Raft-style leader election**
+-   📡 **WAL replication system**
+-   📦 **Leader-based writes (SET/DEL)**
+-   🔍 **Follower read replicas (eventually consistent)**
+-   🚨 **Automatic failover elections**
+-   ↩️ **Client REDIRECT mechanizmu**
 
 ---
 
 # ⚙️ **1. Reikalavimai**
 
-- Linux / WSL / macOS
-- GCC 9+ / Clang 10+
-- C++17
-- pthread
-- 4 VPS / 4 vietiniai procesai
+-   Linux / WSL / macOS
+-   GCC 9+ / Clang 10+
+-   C++17
+-   pthread
+-   4 VPS / 4 vietiniai procesai
 
 ---
 
@@ -28,6 +28,10 @@ g++ -std=c++17 -pthread leader.cpp -o leader
 g++ -std=c++17 -pthread follower.cpp -o follower
 g++ -std=c++17 -pthread client.cpp -o client
 g++ -std=c++17 -pthread run.cpp -o run
+
+arba
+
+make all
 ```
 
 ---
@@ -73,10 +77,10 @@ Kiekviename node paleidžiame:
 
 **run.cpp automatiškai:**
 
-- Stebi heartbeats
-- Atlieka rinkimus
-- Paleidžia leader ar follower procesus
-- Prižiūri jų restartą
+-   Stebi heartbeats
+-   Atlieka rinkimus
+-   Paleidžia leader ar follower procesus
+-   Prižiūri jų restartą
 
 ---
 
@@ -227,10 +231,10 @@ Followeriai WAL’ą krauna paleidimo metu ir taiko į atmintį.
 
 Kiekvienas followeris turi read-only serverį:
 
-- follower 1 → port **7101**
-- follower 2 → port **7102**
-- follower 3 → port **7103**
-- follower 4 → port **7104**
+-   follower 1 → port **7101**
+-   follower 2 → port **7102**
+-   follower 3 → port **7103**
+-   follower 4 → port **7104**
 
 Jie palaiko tik:
 
