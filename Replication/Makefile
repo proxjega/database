@@ -1,38 +1,41 @@
 # Compiler settings
 CXX = g++
 # -I. includes current directory (for common.hpp)
-# -I../btree/include includes the logger header location
-# -std=c++17 is required for <filesystem> used in logger.hpp
+# -I../btree/include includes the B-Tree headers (database.h, logger.hpp, etc.)
 CXXFLAGS = -std=c++17 -Wall -Wextra -pthread -I. -I../btree/include
 
-# Helper variables for paths
+# Path to the B-Tree source code
 BTREE_SRC_DIR = ../btree/src
-BTREE_OBJ = logger.o
+
+# The object files needed to run the Database engine.
+# We need database.o (the main class), logger.o (WAL), and the page implementations.
+BTREE_OBJS = database.o logger.o page.o internalpage.o leafpage.o
 
 # Targets to build
 all: leader follower client run
 
-# 1. Compile the Logger implementation from the sibling directory
-# We compile it into an object file (.o) so we don't have to recompile it for every executable
-$(BTREE_OBJ): $(BTREE_SRC_DIR)/logger.cpp
-	$(CXX) $(CXXFLAGS) -c $(BTREE_SRC_DIR)/logger.cpp -o $(BTREE_OBJ)
+# --- Build Rules ---
+
+# 1. Generic rule to compile any .cpp file from ../btree/src into a .o file
+# This handles database.cpp, logger.cpp, page.cpp, etc.
+%.o: $(BTREE_SRC_DIR)/%.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # 2. Build the Leader executable
-# Depends on leader.cpp, the logger object file, and common.hpp
-leader: leader.cpp $(BTREE_OBJ) common.hpp
-	$(CXX) $(CXXFLAGS) leader.cpp $(BTREE_OBJ) -o leader
+leader: leader.cpp $(BTREE_OBJS) common.hpp
+	$(CXX) $(CXXFLAGS) leader.cpp $(BTREE_OBJS) -o leader
 
 # 3. Build the Follower executable
-follower: follower.cpp $(BTREE_OBJ) common.hpp
-	$(CXX) $(CXXFLAGS) follower.cpp $(BTREE_OBJ) -o follower
+follower: follower.cpp $(BTREE_OBJS) common.hpp
+	$(CXX) $(CXXFLAGS) follower.cpp $(BTREE_OBJS) -o follower
 
 # 4. Build the Client executable
-client: client.cpp $(BTREE_OBJ) common.hpp
-	$(CXX) $(CXXFLAGS) client.cpp $(BTREE_OBJ) -o client
+client: client.cpp $(BTREE_OBJS) common.hpp
+	$(CXX) $(CXXFLAGS) client.cpp $(BTREE_OBJS) -o client
 
-# 5. Build the Run executable (if needed)
-run: run.cpp $(BTREE_OBJ) common.hpp
-	$(CXX) $(CXXFLAGS) run.cpp $(BTREE_OBJ) -o run
+# 5. Build the Run executable
+run: run.cpp $(BTREE_OBJS) common.hpp
+	$(CXX) $(CXXFLAGS) run.cpp $(BTREE_OBJS) -o run
 
 # Clean up build artifacts
 clean:

@@ -60,10 +60,15 @@ private:
     void Optimize();
 
     // Wrapper metodai WAL metodams, kad būtų patogiau koduot.
-    bool ExecuteLogSet(const string &key, const string &value);
-    bool ExecuteLogDelete(const string &key);
+    uint64_t ExecuteLogSetWithLSN(const string &key, const string &value);
+    uint64_t ExecuteLogDeleteWithLSN(const string &key);
+
+    bool ApplyReplication(WalRecord walRecord);
 
     uint64_t GetWalSequenceNumber() const { return wal.GetCurrentSequenceNumber(); }
+
+    vector<WalRecord> ReadEntireWal() { return wal.ReadAll(); }
+    vector<WalRecord> GetWalRecordsSince(uint64_t lsn) { return wal.ReadFrom(lsn); }
 
     // For Debug
     void CoutDatabase() const;
