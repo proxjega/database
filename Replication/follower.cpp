@@ -81,7 +81,36 @@ static void read_only_server(uint16_t port) {
                             } else {
                                 send_all(client_socket, "NOT_FOUND\n");
                             }
-                        } else {
+                        }
+                        // GETFF <key> <n> - Forward range query
+                        else if (tokens.size() >= 3 && tokens[0] == "GETFF") {
+                            try {
+                                uint32_t n = std::stoul(tokens[2]);
+                                auto results = duombaze->GetFF(tokens[1], n);
+
+                                for (const auto& cell : results) {
+                                    send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+                                }
+                                send_all(client_socket, "END\n");
+                            } catch (const std::exception& e) {
+                                send_all(client_socket, "ERR " + std::string(e.what()) + "\n");
+                            }
+                        }
+                        // GETFB <key> <n> - Backward range query
+                        else if (tokens.size() >= 3 && tokens[0] == "GETFB") {
+                            try {
+                                uint32_t n = std::stoul(tokens[2]);
+                                auto results = duombaze->GetFB(tokens[1], n);
+
+                                for (const auto& cell : results) {
+                                    send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+                                }
+                                send_all(client_socket, "END\n");
+                            } catch (const std::exception& e) {
+                                send_all(client_socket, "ERR " + std::string(e.what()) + "\n");
+                            }
+                        }
+                        else {
                             // Bet kokia kita komanda – redirect į leader'į.
                             // Taip užtikrinam, kad followeris nekeičia būsenos.
                             send_all(

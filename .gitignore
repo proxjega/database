@@ -98,6 +98,9 @@ proguard/
 # Log Files
 *.log
 
+#Claude
+CLAUDE.md
+
 # Android Studio Navigation editor temp files
 .navigation/
 
@@ -1051,3 +1054,8 @@ server_app
 .vscode/launch.json
 .gitignore
 btree/data/DataBaseSetTest.db
+
+client
+follower
+leader
+run

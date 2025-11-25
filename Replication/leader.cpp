@@ -290,9 +290,37 @@ static void serve_clients(uint16_t client_port) {
               send_all(client_socket, "VALUE " + result->value + "\n");
             }
           }
+          // --- GETFF <key> <n> - Forward range query ---
+          else if (tokens[0] == "GETFF" && tokens.size() >= 3) {
+            try {
+              uint32_t n = std::stoul(tokens[2]);
+              auto results = duombaze->GetFF(tokens[1], n);
+
+              for (const auto& cell : results) {
+                send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+              }
+              send_all(client_socket, "END\n");
+            } catch (const std::exception& e) {
+              send_all(client_socket, "ERR " + std::string(e.what()) + "\n");
+            }
+          }
+          // --- GETFB <key> <n> - Backward range query ---
+          else if (tokens[0] == "GETFB" && tokens.size() >= 3) {
+            try {
+              uint32_t n = std::stoul(tokens[2]);
+              auto results = duombaze->GetFB(tokens[1], n);
+
+              for (const auto& cell : results) {
+                send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+              }
+              send_all(client_socket, "END\n");
+            } catch (const std::exception& e) {
+              send_all(client_socket, "ERR " + std::string(e.what()) + "\n");
+            }
+          }
           // Neatpažinta komanda – grąžinam error'ą su usage
           else {
-            send_all(client_socket, "ERR usage: SET <k> <v> | GET <k> | DEL <k>\n");
+            send_all(client_socket, "ERR usage: SET <k> <v> | GET <k> | DEL <k> | GETFF <k> <n> | GETFB <k> <n>\n");
           }
         }
       } catch (const std::exception& ex) {
