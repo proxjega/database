@@ -1,13 +1,14 @@
 // client.cpp
-// Klientas, kuris kalbasi su lyderiu (arba followeriais) per TCP.
-// Palaiko SET/GET/DEL ir GETFF/GETFB.
+// CLI testavimui. HTTP serveris naudoja atskirą DbClient biblioteką
+// Palaiko SET/GET/DEL/GETFF/GETFB
 //
-// GET   – skaito reikšmę iš lyderio (su REDIRECT palaikymu).
-// SET   – rašo reikšmę į lyderį.
-// DEL   – trina raktą per lyderį.
-// GETFF – eina tiesiai į konkretų followerį (forward).
-// GETFB – pirmiausiai bando followerį, jei nieko – kreipiasi į lyderį (fallback).
-// leader – atspausdina visus CLUSTER IP ir pažymi, kuris yra LEADER.
+// Komandos:
+// GET    – Nuskaito vieną reikšmę iš lyderio (su REDIRECT palaikymu)
+// SET    – Įrašo key-value porą į lyderį
+// DEL    – Ištrina raktą per lyderį
+// GETFF  – Pirmyn einanti range užklausa (n raktų pradedant nuo key)
+// GETFB  – Atgal einanti range užklausa (n raktų baigiant key)
+// leader – Atspausdina visus CLUSTER IP ir pažymi, kuris yra LEADER
 
 #include "common.hpp"
 #include "rules.cpp"   // kad matytume CLUSTER, CLIENT_PORT, FOLLOWER_READ_PORT
@@ -183,8 +184,8 @@ int main(int argc, char** argv) {
               << "  client <leader_host> <leader_client_port> GET <k>\n"
               << "  client <leader_host> <leader_client_port> SET <k> <v>\n"
               << "  client <leader_host> <leader_client_port> DEL <k>\n"
-              << "  client <leader_host> <leader_client_port> GETFF <k> <follower_host:port>\n"
-              << "  client <leader_host> <leader_client_port> GETFB <k> <follower_host:port>\n"
+              << "  client <leader_host> <leader_client_port> GETFF <k> [<n>]   # (default n=10)\n"
+              << "  client <leader_host> <leader_client_port> GETFB <k> [<n>]   # (default n=10)\n"
               << "  client leader   # atspausdina visus CLUSTER IP ir pažymi LEADER\n";
     return 1;
   }
@@ -215,7 +216,10 @@ int main(int argc, char** argv) {
              "DEL " + std::string(argv[4])
            ) ? 0 : 1;
   }
-  // GETFF – "forward": eik tiesiai į nurodytą follower host:port
+
+  /*
+  // SENA GETFF/GETFB follower'ių maršrutizavimo logika
+  // Dabar GETFF/GETFB yra paprastos range užklausos siunčiamos į lyderį
   if (command == "GETFF" && argc >= 6) {
     std::string followerHost;
     uint16_t followerPort;
@@ -228,7 +232,6 @@ int main(int argc, char** argv) {
              "GET " + std::string(argv[4])
            ) ? 0 : 1;
   }
-  // GETFB – "fallback": pirma bando followerį, po to lyderį
   if (command == "GETFB" && argc >= 6) {
     std::string followerHost;
     uint16_t followerPort;
@@ -280,6 +283,51 @@ int main(int argc, char** argv) {
              leaderHost, leaderPort,
              "GET " + std::string(argv[4])
            ) ? 0 : 1;
+  }
+  */
+
+  // GETFF <key> <n> - Forward range query to leader
+  if (command == "GETFF" && argc >= 5) {
+    std::string key = argv[4];
+    std::string count = (argc >= 6) ? argv[5] : "10";
+
+    sock_t s = tcp_connect(leaderHost, leaderPort);
+    if (s == NET_INVALID) {
+      std::cerr << "ERR_CONNECT\n";
+      return 1;
+    }
+
+    send_all(s, "GETFF " + key + " " + count + "\n");
+
+    std::string line;
+    while (recv_line(s, line)) {
+      if (line == "END") break;
+      std::cout << line << "\n";
+    }
+    net_close(s);
+    return 0;
+  }
+
+  // GETFB <key> <n> - Backward range query to leader
+  if (command == "GETFB" && argc >= 5) {
+    std::string key = argv[4];
+    std::string count = (argc >= 6) ? argv[5] : "10";
+
+    sock_t s = tcp_connect(leaderHost, leaderPort);
+    if (s == NET_INVALID) {
+      std::cerr << "ERR_CONNECT\n";
+      return 1;
+    }
+
+    send_all(s, "GETFB " + key + " " + count + "\n");
+
+    std::string line;
+    while (recv_line(s, line)) {
+      if (line == "END") break;
+      std::cout << line << "\n";
+    }
+    net_close(s);
+    return 0;
   }
 
   std::cerr << "Bad args. See usage above.\n";
