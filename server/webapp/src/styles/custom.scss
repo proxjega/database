@@ -1,0 +1,90 @@
+// Custom SCSS styles for Database Web App
+
+// Variables
+$primary-color: #0d6efd;
+$success-color: #198754;
+$danger-color: #dc3545;
+
+// Global styles
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+// Card styles
+.card {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+  }
+}
+
+// Code block styling
+code {
+  background-color: #f8f9fa;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: 'Courier New', monospace;
+}
+
+// Button hover effects
+.btn {
+  transition: all 0.2s;
+}
+
+// Table responsive wrapper
+.table-responsive {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+// Loading spinner center
+.loading-spinner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+}
+
+// Custom pagination
+.pagination {
+  .page-link {
+    transition: all 0.2s;
+
+    &:hover {
+      transform: translateY(-1px);
+    }
+  }
+}
+
+// Alert animations
+.alert {
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+// Form focus styles
+.form-control:focus,
+.form-select:focus {
+  border-color: $primary-color;
+  box-shadow: 0 0 0 0.25rem rgba($primary-color, 0.25);
+}
+
+// Footer
+footer {
+  margin-top: auto;
+  border-top: 1px solid #dee2e6;
+}
