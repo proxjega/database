@@ -318,9 +318,18 @@ static void serve_clients(uint16_t client_port) {
               send_all(client_socket, "ERR " + std::string(e.what()) + "\n");
             }
           }
+          // --- OPTIMIZE - Rebuild database, removing deleted entries ---
+          else if (tokens[0] == "OPTIMIZE") {
+            try {
+              duombaze->Optimize();
+              send_all(client_socket, "OK_OPTIMIZED\n");
+            } catch (const std::exception& e) {
+              send_all(client_socket, "ERR " + std::string(e.what()) + "\n");
+            }
+          }
           // Neatpažinta komanda – grąžinam error'ą su usage
           else {
-            send_all(client_socket, "ERR usage: SET <k> <v> | GET <k> | DEL <k> | GETFF <k> <n> | GETFB <k> <n>\n");
+            send_all(client_socket, "ERR usage: SET <k> <v> | GET <k> | DEL <k> | GETFF <k> <n> | GETFB <k> <n> | OPTIMIZE\n");
           }
         }
       } catch (const std::exception& ex) {

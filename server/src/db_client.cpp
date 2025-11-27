@@ -191,3 +191,35 @@ DbResponse DbClient::getfb(const std::string& key, uint32_t count) {
 
     return response;
 }
+
+DbResponse DbClient::optimize() {
+    DbResponse response;
+    sock_t s = tcp_connect(leader_host, leader_port);
+    if (s == NET_INVALID) {
+        response.success = false;
+        response.error = "Failed to connect to database leader";
+        return response;
+    }
+
+    send_all(s, "OPTIMIZE\n");
+
+    std::string line;
+    if (!recv_line(s, line)) {
+        net_close(s);
+        response.error = "No response from database";
+        return response;
+    }
+
+    net_close(s);
+
+    line = trim(line);
+    if (line == "OK_OPTIMIZED") {
+        response.success = true;
+    } else if (line.substr(0, 3) == "ERR") {
+        response.error = line.substr(4);  // Skip "ERR "
+    } else {
+        response.error = "Unexpected response: " + line;
+    }
+
+    return response;
+}
