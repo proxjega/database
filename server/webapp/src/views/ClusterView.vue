@@ -1,18 +1,32 @@
 <template>
   <div class="container mt-4">
-    <h2>Cluster Status</h2>
+    <h2>Klasterio Būsena</h2>
 
     <div class="row mb-4">
       <div class="col-md-12">
-        <button class="btn btn-primary" @click="refreshStatus">
-          Refresh Status
+        <button class="btn btn-primary me-2" @click="refreshStatus">
+          Atnaujinti Būseną
+        </button>
+        <button class="btn btn-warning" @click="optimizeDatabase">
+          Optimizuoti Duomenų Bazę
         </button>
       </div>
     </div>
 
+    <!-- Success/Error Messages -->
+    <div v-if="message" class="alert alert-success alert-dismissible fade show" role="alert">
+      {{ message }}
+      <button type="button" class="btn-close" @click="message = null"></button>
+    </div>
+
+    <div v-if="optimizeError" class="alert alert-danger alert-dismissible fade show" role="alert">
+      {{ optimizeError }}
+      <button type="button" class="btn-close" @click="optimizeError = null"></button>
+    </div>
+
     <div v-if="loading" class="text-center loading-spinner">
       <div class="spinner-border" role="status">
-        <span class="visually-hidden">Loading...</span>
+        <span class="visually-hidden">Kraunama...</span>
       </div>
     </div>
 
@@ -25,26 +39,26 @@
         <div class="col-md-6 mb-4">
           <div class="card">
             <div class="card-header bg-success text-white">
-              <h5 class="mb-0">Current Leader</h5>
+              <h5 class="mb-0">Dabartinis Lyderis</h5>
             </div>
             <div class="card-body">
               <div v-if="leaderInfo">
                 <p class="mb-2">
-                  <strong>Host:</strong> <code>{{ leaderInfo.host }}</code>
+                  <strong>Adresas:</strong> <code>{{ leaderInfo.host }}</code>
                 </p>
                 <p class="mb-2">
-                  <strong>Port:</strong> <code>{{ leaderInfo.port }}</code>
+                  <strong>Portas:</strong> <code>{{ leaderInfo.port }}</code>
                 </p>
                 <p class="mb-2">
-                  <strong>Status:</strong>
-                  <span class="badge bg-success">{{ leaderInfo.status || 'Active' }}</span>
+                  <strong>Būsena:</strong>
+                  <span class="badge bg-success">{{ leaderInfo.status === 'active' ? 'Aktyvus' : leaderInfo.status }}</span>
                 </p>
                 <p class="mb-0">
-                  <strong>Last Updated:</strong> {{ formatTimestamp(leaderInfo.timestamp) }}
+                  <strong>Paskutinis Atnaujinimas:</strong> {{ formatTimestamp(leaderInfo.timestamp) }}
                 </p>
               </div>
               <div v-else class="text-muted">
-                No leader information available
+                Lyderio informacija nepasiekiama
               </div>
             </div>
           </div>
@@ -53,23 +67,23 @@
         <div class="col-md-6 mb-4">
           <div class="card">
             <div class="card-header bg-info text-white">
-              <h5 class="mb-0">HTTP Server Health</h5>
+              <h5 class="mb-0">HTTP Serverio Būsena</h5>
             </div>
             <div class="card-body">
               <div v-if="healthInfo">
                 <p class="mb-2">
-                  <strong>Status:</strong>
-                  <span class="badge bg-success">{{ healthInfo.status || 'OK' }}</span>
+                  <strong>Būsena:</strong>
+                  <span class="badge bg-success">{{ healthInfo.status === 'ok' ? 'Veikia' : healthInfo.status }}</span>
                 </p>
                 <p class="mb-2">
-                  <strong>Connected to Leader:</strong> <code>{{ healthInfo.leader_host }}</code>
+                  <strong>Prijungtas prie Lyderio:</strong> <code>{{ healthInfo.leader_host }}</code>
                 </p>
                 <p class="mb-0">
-                  <strong>Leader Port:</strong> <code>{{ healthInfo.leader_port }}</code>
+                  <strong>Lyderio Portas:</strong> <code>{{ healthInfo.leader_port }}</code>
                 </p>
               </div>
               <div v-else class="text-muted">
-                No health information available
+                Būsenos informacija nepasiekiama
               </div>
             </div>
           </div>
@@ -80,22 +94,22 @@
         <div class="col-md-12">
           <div class="card">
             <div class="card-header">
-              <h5 class="mb-0">Cluster Configuration</h5>
+              <h5 class="mb-0">Klasterio Konfigūracija</h5>
             </div>
             <div class="card-body">
               <table class="table table-sm">
                 <thead>
                   <tr>
-                    <th>Node</th>
-                    <th>Client Port (Leader)</th>
-                    <th>Read Port (Follower)</th>
-                    <th>Replication Port</th>
-                    <th>Control Port</th>
+                    <th>Mazgas</th>
+                    <th>Kliento Portas (Lyderis)</th>
+                    <th>Skaitymo Portas (Sekėjas)</th>
+                    <th>Replikacijos Portas</th>
+                    <th>Valdymo Portas</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr v-for="node in clusterNodes" :key="node.id">
-                    <td><strong>Node {{ node.id }}</strong></td>
+                    <td><strong>Mazgas {{ node.id }}</strong></td>
                     <td><code>{{ node.clientPort }}</code></td>
                     <td><code>{{ node.readPort }}</code></td>
                     <td><code>{{ node.replicationPort }}</code></td>
@@ -120,6 +134,8 @@ export default {
     return {
       loading: false,
       error: null,
+      message: null,
+      optimizeError: null,
       leaderInfo: null,
       healthInfo: null,
       clusterNodes: [
@@ -141,19 +157,34 @@ export default {
           api.discoverLeader(),
           api.health()
         ]);
-
         this.leaderInfo = leaderResponse;
         this.healthInfo = healthResponse;
       } catch (err) {
-        this.error = err.message || 'Failed to fetch cluster status';
+        this.error = err.message || 'Nepavyko gauti klasterio būsenos';
       } finally {
         this.loading = false;
       }
     },
 
+    async optimizeDatabase() {
+      this.optimizeError = null;
+      this.message = null;
+
+      if (!confirm('Ar tikrai norite optimizuoti duomenų bazę? Tai gali užtrukti.')) {
+        return;
+      }
+
+      try {
+        await api.optimize();
+        this.message = 'Duomenų bazė sėkmingai optimizuota!';
+      } catch (err) {
+        this.optimizeError = err.response?.data?.error || err.message || 'Optimizavimas nepavyko';
+      }
+    },
+
     formatTimestamp(timestamp) {
-      if (!timestamp) return 'N/A';
-      return new Date(timestamp).toLocaleString();
+      if (!timestamp) return 'Nėra duomenų';
+      return new Date(timestamp).toLocaleString('lt-LT');
     }
   },
   mounted() {

@@ -266,13 +266,21 @@ inline auto make_routes() {
     }
   };
 
-  // Health check endpoint
-  api.get("/health") = [db_client](http_request& req, http_response& res) {
-    res.write_json(
-      s::status = "ok",
-      s::leader_host = db_client->get_leader_host(),
-      s::leader_port = (int)db_client->get_leader_port()
-    );
+  // Health check endpoint - returns current leader connection info
+  api.get("/api/health") = [db_client](http_request& req, http_response& res) {
+    std::string leader_host = db_client->get_leader_host();
+    uint16_t leader_port = db_client->get_leader_port();
+
+    // Build JSON response manually for better control
+    std::ostringstream json;
+    json << "{"
+         << "\"status\":\"ok\","
+         << "\"leader_host\":\"" << leader_host << "\","
+         << "\"leader_port\":" << leader_port
+         << "}";
+
+    res.set_header("Content-Type", "application/json");
+    res.write(json.str());
   };
 
   // GET /api/leader - Discover current cluster leader
