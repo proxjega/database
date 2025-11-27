@@ -194,6 +194,23 @@ inline auto make_routes() {
     }
   };
 
+  // POST /api/optimize - Rebuild database, removing deleted entries
+  api.post("/api/optimize") = [db_client](http_request& req, http_response& res) {
+    try {
+      auto result = db_client->optimize();
+
+      if (result.success) {
+        res.write_json(s::status = "optimized");
+      } else {
+        res.set_status(500);
+        res.write_json(s::error = "Optimize failed: " + result.error);
+      }
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(s::error = std::string("Internal error: ") + e.what());
+    }
+  };
+
   // Health check endpoint
   api.get("/health") = [db_client](http_request& req, http_response& res) {
     res.write_json(

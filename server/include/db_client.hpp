@@ -81,6 +81,12 @@ public:
     DbResponse getfb(const std::string& key, uint32_t count);
 
     /**
+     * OPTIMIZE - Rebuild database, removing deleted entries
+     * @return DbResponse indicating success or error
+     */
+    DbResponse optimize();
+
+    /**
      * Get current leader host
      * @return Leader host string
      */
