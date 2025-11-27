@@ -2,19 +2,74 @@
 #include <lithium_http_server.hh>
 #include "symbols.hh"
 #include "db_client.hpp"
+#include "../../Replication/common.hpp"
 #include <string>
 #include <optional>
 #include <memory>
 #include <sstream>
+#include <vector>
+#include <fstream>
 
 using namespace li;
+
+// Helper function to discover current leader from cluster
+// Uses same logic as ./client leader command
+inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_port) {
+  const std::vector<std::string> CLUSTER_NODES = {
+    "127.0.0.1", "127.0.0.1", "127.0.0.1", "127.0.0.1"
+  };
+
+  // Tier 1: REDIRECT probe on follower read ports
+  for (int node = 1; node <= 4; node++) {
+    uint16_t follower_port = 7100 + node;
+    sock_t s = tcp_connect(CLUSTER_NODES[node-1], follower_port);
+
+    if (s != NET_INVALID) {
+      send_all(s, "SET __probe__ 1\n");  // Non-GET triggers REDIRECT
+
+      std::string response;
+      if (recv_line(s, response)) {
+        auto tokens = split(trim(response), ' ');
+        if (tokens.size() >= 3 && tokens[0] == "REDIRECT") {
+          out_host = tokens[1];
+          out_port = std::stoi(tokens[2]);
+          net_close(s);
+          return true;
+        }
+      }
+      net_close(s);
+    }
+  }
+
+  // Tier 2: Port listening check
+  for (const auto& host : CLUSTER_NODES) {
+    sock_t s = tcp_connect(host, 7001);
+    if (s != NET_INVALID) {
+      out_host = host;
+      out_port = 7001;
+      net_close(s);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Helper to get current timestamp in milliseconds
+inline uint64_t get_timestamp_ms() {
+  using namespace std::chrono;
+  return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
 
 inline auto make_routes() {
   http_api api;
 
-  // Initialize database client (pointing to local leader)
-  // In production, this should be configurable via environment variables
-  auto db_client = std::make_shared<DbClient>("127.0.0.1", 7001);
+  // Discover leader at server startup (best-effort)
+  std::string leader_host = "127.0.0.1";  // Fallback
+  uint16_t leader_port = 7001;
+  discover_leader_from_cluster(leader_host, leader_port);
+
+  auto db_client = std::make_shared<DbClient>(leader_host, leader_port);
 
   // GET /api/keys/{{key}} - Retrieve a single key
   api.get("/api/get/{{key}}") = [db_client](http_request& req, http_response& res) {
@@ -220,6 +275,38 @@ inline auto make_routes() {
     );
   };
 
+  // GET /api/leader - Discover current cluster leader
+  api.get("/api/leader") = [](http_request& req, http_response& res) {
+    try {
+      std::string leader_host;
+      uint16_t leader_port = 7001;
+
+      // Try REDIRECT probe method (same as client.cpp)
+      if (discover_leader_from_cluster(leader_host, leader_port)) {
+        // Build JSON manually for complex structure
+        std::ostringstream json;
+        json << "{"
+             << "\"host\":\"" << leader_host << "\","
+             << "\"port\":" << leader_port << ","
+             << "\"status\":\"active\","
+             << "\"timestamp\":" << get_timestamp_ms()
+             << "}";
+
+        res.set_header("Content-Type", "application/json");
+        res.write(json.str());
+      } else {
+        res.set_status(503);
+        res.write_json(
+          s::error = "Leader not available",
+          s::status = "unavailable"
+        );
+      }
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(s::error = std::string("Discovery error: ") + e.what());
+    }
+  };
+
   // Test simple parameterized route
   api.get("/test/{{name}}") = [](http_request& req, http_response& res) {
     auto params = req.url_parameters(s::name = std::string());
@@ -236,6 +323,56 @@ inline auto make_routes() {
   api.get("/api/keys-test/{{key}}") = [](http_request& req, http_response& res) {
     auto params = req.url_parameters(s::key = std::string());
     res.write("Keys Test: " + params.key);
+  };
+
+  // Static file serving for Vue.js SPA (MUST BE LAST - catch-all route)
+  api.get("/{{path...}}") = [](http_request& req, http_response& res) {
+    auto url_params = req.url_parameters(s::path = std::string_view());
+    std::string path(url_params.path);
+
+    // Security: prevent directory traversal
+    if (path.find("..") != std::string::npos) {
+      res.set_status(403);
+      res.write("Forbidden");
+      return;
+    }
+
+    // Map URL to file path
+    std::string file_path = "public/" + path;
+
+    // Default to index.html for SPA routing (empty path)
+    if (path.empty()) {
+      file_path = "public/index.html";
+    }
+
+    // Attempt to serve file
+    std::ifstream file(file_path, std::ios::binary);
+    if (!file.is_open()) {
+      // Fallback to index.html for Vue Router (404 becomes SPA route)
+      file.open("public/index.html", std::ios::binary);
+      if (!file.is_open()) {
+        res.set_status(404);
+        res.write("Not Found");
+        return;
+      }
+    }
+
+    // Determine MIME type based on file extension
+    std::string mime_type = "text/html";
+    if (path.ends_with(".js")) mime_type = "application/javascript";
+    else if (path.ends_with(".css")) mime_type = "text/css";
+    else if (path.ends_with(".json")) mime_type = "application/json";
+    else if (path.ends_with(".png")) mime_type = "image/png";
+    else if (path.ends_with(".jpg") || path.ends_with(".jpeg")) mime_type = "image/jpeg";
+    else if (path.ends_with(".svg")) mime_type = "image/svg+xml";
+    else if (path.ends_with(".ico")) mime_type = "image/x-icon";
+
+    // Read and serve file
+    std::string content((std::istreambuf_iterator<char>(file)),
+                        std::istreambuf_iterator<char>());
+
+    res.set_header("Content-Type", mime_type);
+    res.write(content);
   };
 
   return api;

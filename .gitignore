@@ -1050,6 +1050,7 @@ dkms.conf
 *.db
 
 server_app
+app.*
 .vscode/settings.json
 .vscode/launch.json
 .gitignore
