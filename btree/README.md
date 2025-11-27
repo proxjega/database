@@ -2,68 +2,15 @@
 
 Puslapiais pagrįsta B+ medžio implementacija su Write-Ahead Logging (WAL) palaikymu ir crash recovery funkcionalumu.
 
-## Architektūra
-
-```
-┌────────────────────────────────────────────────────────┐
-│                  CLI Interface                          │
-│         (main.cpp - interaktyvus režimas)              │
-└─────────────────┬──────────────────────────────────────┘
-                  │
-┌─────────────────▼──────────────────────────────────────┐
-│              Database Class                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │     Get      │  │     Set      │  │   Remove    │ │
-│  │   (search)   │  │   (insert)   │  │   (delete)  │ │
-│  └──────────────┘  └──────────────┘  └─────────────┘ │
-│                                                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌─────────────┐ │
-│  │    GETFF     │  │    GETFB     │  │  Optimize   │ │
-│  │  (forward)   │  │  (backward)  │  │  (rebuild)  │ │
-│  └──────────────┘  └──────────────┘  └─────────────┘ │
-└─────────────────┬──────────────────────────────────────┘
-                  │
-┌─────────────────▼──────────────────────────────────────┐
-│                WAL (Write-Ahead Log)                    │
-│  - Įrašoma prieš kiekvieną Set/Remove operaciją       │
-│  - Recovery mechanizmas (replay on open)               │
-│  - Formatas: seq\top\tkey\tvalue                       │
-└─────────────────┬──────────────────────────────────────┘
-                  │
-┌─────────────────▼──────────────────────────────────────┐
-│            B+ Tree Page Manager                         │
-│                                                         │
-│  MetaPage (page 0)                                     │
-│  ┌────────────────────────────────────────────┐       │
-│  │ root_page_id │ last_page_id │ total_keys   │       │
-│  └────────────────────────────────────────────┘       │
-│                                                         │
-│  LeafPages                    InternalPages            │
-│  ┌──────────────┐            ┌──────────────┐        │
-│  │ Key | Value  │            │ Key | PageID │        │
-│  │ Key | Value  │            │ Key | PageID │        │
-│  │ ...          │            │ ...          │        │
-│  │ → next_leaf  │            └──────────────┘        │
-│  └──────────────┘                                      │
-│                                                         │
-└─────────────────┬──────────────────────────────────────┘
-                  │
-┌─────────────────▼──────────────────────────────────────┐
-│              Disk Storage (*.db failas)                 │
-│  - Fiksuoto dydžio puslapiai (4096 baitų)             │
-│  - Random access (fseek/fread/fwrite)                  │
-└─────────────────────────────────────────────────────────┘
-```
-
 ## Funkcijos
 
-- ✅ **CRUD Operacijos**: Get, Set, Remove
-- ✅ **Range Queries**: GETFF (forward), GETFB (backward)
-- ✅ **WAL**: Automatinis recovery po crash
-- ✅ **Page Splitting**: Automatinis puslapių dalijimas
-- ✅ **Lazy Deletion**: Žymėjimas kaip ištrinta (ištrina tik Optimize)
-- ✅ **Optimize**: Medžio perkūrimas, ištrintų įrašų šalinimas
-- ✅ **Interactive CLI**: Komandų eilutės sąsaja
+- **CRUD Operacijos**: Get, Set, Remove
+- **Range Queries**: GETFF (forward), GETFB (backward)
+- **WAL**: Automatinis recovery po crash
+- **Page Splitting**: Automatinis puslapių dalijimas
+- **Lazy Deletion**: Žymėjimas kaip ištrinta (ištrina tik Optimize)
+- **Optimize**: Medžio perkūrimas, ištrintų įrašų šalinimas
+-  **Interactive CLI**: Komandinės eilutės sąsaja
 
 ## Kompiliavimas
 
@@ -167,34 +114,6 @@ Optimized
 Key not found
 ```
 
-## Failų Struktūra
-
-```
-btree/
-├── include/
-│   ├── database.h           # Database klasė
-│   ├── page.h               # Page bazinė klasė
-│   ├── leafpage.h           # LeafPage implementacija
-│   ├── internalpage.h       # InternalPage implementacija
-│   ├── metapage.h           # MetaPage (puslapio 0)
-│   └── logger.hpp           # WAL implementacija
-│
-├── src/
-│   ├── database.cpp         # Pagrindinė DB logika
-│   ├── main.cpp             # CLI interaktyvi sąsaja
-│   ├── leafpage.cpp         # Lapų puslapių logika
-│   ├── internalpage.cpp     # Vidinių puslapių logika
-│   └── metapage.cpp         # Meta puslapio logika
-│
-├── build/
-│   └── main                 # Sukompiliuotas binary
-│
-├── Makefile                 # Build konfigūracija
-└── README.md                # Šis failas
-```
-
-## Techniniai Detaliai
-
 ### Puslapių Struktūra
 
 **MetaPage (puslapio 0):**
@@ -244,14 +163,6 @@ Kiekvienas WAL įrašas:
 <seq>\t<op>\t<key>\t<value>
 ```
 
-Pavyzdys (`database.wal`):
-```
-1	SET	user01	Jonas
-2	SET	user02	Petras
-3	DEL	user01
-4	SET	user03	Vardas
-```
-
 ### Page Splitting
 
 Kai puslapis pilnas:
@@ -294,118 +205,6 @@ Perkompiliuoti:
 ```bash
 make clean && make all
 ```
-
-## Testavimas
-
-### Bazinis Testas
-
-```bash
-./build/main
-> SET test value
-> GET test
-# Turėtų grąžinti: value
-
-> DEL test
-> GET test
-# Turėtų grąžinti: Key not found arba empty
-```
-
-### Daug Įrašų Testas
-
-```bash
-# Sukurti 1000 įrašų
-for i in {1..1000}; do
-    echo "SET key$(printf "%04d" $i) value$i"
-done | ./build/main
-
-# Testuoti range query
-./build/main
-> GETFF key0500 10
-# Turėtų grąžinti 10 įrašų nuo key0500
-```
-
-### Crash Recovery Testas
-
-```bash
-# Paleisti DB
-./build/main
-> SET test1 value1
-> SET test2 value2
-# Nutraukti procesą (Ctrl+C)
-
-# Paleisti iš naujo
-./build/main
-> GET test1
-# Turėtų grąžinti: value1 (atstatyta iš WAL)
-```
-
-## Debugging
-
-Kompiliuoti su debug režimu:
-```bash
-# Makefile jau turi -g -DDEBUG
-make clean && make all
-```
-
-Naudoti gdb:
-```bash
-gdb ./build/main
-(gdb) break main
-(gdb) run
-(gdb) continue
-```
-
-## Problemų Sprendimas
-
-### "Failed to open database file"
-
-```bash
-# Patikrinti teises
-ls -la database.db
-
-# Sukurti katalogą jei reikia
-mkdir -p /kelias/iki/database/btree/build
-```
-
-### "Page full, cannot insert"
-
-- Maksimalus rakto ilgis viršytas (>255 baitų)
-- Maksimalus reikšmės ilgis viršytas (>2048 baitų)
-- Patikrinti `MAX_KEY_LENGTH` ir `MAX_VALUE_LENGTH`
-
-### WAL failas labai didelis
-
-```bash
-# Perkurti DB (išvalo WAL)
-./build/main
-> OPTIMIZE
-```
-
-### Segmentation fault
-
-```bash
-# Kompiliuoti su debug
-make clean && make all
-
-# Paleisti su gdb
-gdb ./build/main
-(gdb) run
-# Įvesti komandą kuri sukelia crash
-(gdb) backtrace
-```
-
-## Performance
-
-### Operacijų Sudėtingumas
-
-| Operacija | Laiko Sudėtingumas | Aprašymas |
-|-----------|-------------------|-----------|
-| GET | O(log n) | Medžio paieška |
-| SET | O(log n) + amortized split | Įterpimas su dalijimais |
-| DEL | O(log n) | Lazy deletion |
-| GETFF | O(log n + k) | k - rezultatų skaičius |
-| GETFB | O(log n + k) | k - rezultatų skaičius |
-| OPTIMIZE | O(n log n) | Pilnas rebuild |
 
 ### Optimizacija
 
