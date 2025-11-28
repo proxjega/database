@@ -1010,11 +1010,11 @@ bool Database::RecoverFromWal() {
 
     // Išvalome visus WAL, jeigu atsistatymo metu visi įrašai sėkmingai buvo įsirašyti į B+ medį.
     if (allSuccess) {
-        this->wal.ClearAll();
+        // this->wal.ClearAll();
         return true;
     }
 
-    std::cerr << "CRITICAL: Recovery partially failed. WAL not cleared.\n";
+    std::cerr << "CRITICAL: Recovery partially failed.\n";
     return false;
 
 }
