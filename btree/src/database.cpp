@@ -738,20 +738,40 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
 
     // get root page id
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try {
+        Meta = this->ReadPage(0);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
 
     // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try {
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     // loop to leaf
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
-        currentPage = this->ReadPage(pageID);
+        try {
+            currentPage = this->ReadPage(pageID);
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
     }
 
     //get keys from leaf page
@@ -768,7 +788,14 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
 
     // traverse other leaves
     while (*leaf.Special1()!=0) {
-        leaf = ReadPage(*leaf.Special1());
+        try {
+            leaf = ReadPage(*leaf.Special1());
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
+
         for (int i = leaf.Header()->numberOfCells - 1; i >= 0; i--) {
             keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
             counter++;
@@ -777,8 +804,10 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
             }
         }
     }
+
     return keyValuePairs;
 }
+
 
 /**
  * @brief Getff with pageNum and pageSize
