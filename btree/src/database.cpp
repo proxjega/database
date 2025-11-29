@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -37,7 +38,7 @@ Database::Database(const string &name) : name(name), wal(name) {
         header.lastPageID = 1;
         header.rootPageID = 1;
         header.keyNumber = 0;
-        header.lastSequenceNumber = 0; // 0 ar 1?
+        header.lastSequenceNumber = 1;
         MetaPage Meta(header);
         if (!this->UpdateMetaPage(Meta)) {
             throw std::runtime_error("Error updating meta page\n");
@@ -145,12 +146,14 @@ bool Database::WriteBasicPage(BasicPage &pageToWrite) const {
     // Open database file
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
+        throw std::runtime_error("Failed to open database file for reading");
         return false;
     }
     // Go to page location
     uint32_t pageID = pageToWrite.Header()->pageID;
     databaseFile.seekp(pageID * Page::PAGE_SIZE, ios::beg);
     if (!databaseFile.good()) {
+        throw std::runtime_error("seekp failed in WriteBasicPage");
         return false;
     }
     // Write page buffer
@@ -187,38 +190,51 @@ bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
 std::optional<leafNodeCell> Database::Get(const string& key) const {
     // check keys length
     if (key.length() > MAX_KEY_LENGTH) {
-        cout << "Key is too long!\n";
-        return std::nullopt;
+        throw std::length_error("Key is too long! (max size: 255)");
     }
 
     // get root page id
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try {
+        Meta = this->ReadPage(0);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what();
+        throw;
+    }
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
+        return std::nullopt;
     }
 
     // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try {
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     // loop to leaf
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
-        currentPage = this->ReadPage(pageID);
+        try {
+            currentPage = this->ReadPage(pageID);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
     }
 
     // get key from leaf page (if exists)
     LeafPage leaf(currentPage);
-    auto cell = leaf.FindKey(key);
-    if (cell.has_value()){
-        cout << cell->value << "\n";
-        return cell;
-    }
-
-    cout << "Key not found!\n";
-    return std::nullopt;
+    std::optional<leafNodeCell> cell = leaf.FindKey(key);
+    return cell;
 }
 /**
  * @brief Basic Set operation. Sets value to a key. Overwrites older key:value pairs
@@ -229,27 +245,48 @@ std::optional<leafNodeCell> Database::Get(const string& key) const {
  */
 bool Database::Set(const string& key, const string& value){
     // check strings length
-    if (key.length() > MAX_KEY_LENGTH || value.length() > MAX_VALUE_LENGTH) {
-        cout << "Key or value is too long!\n";
-        return false;
+    if (key.length() > MAX_KEY_LENGTH) {
+        throw std::length_error("Key is too long! (max size: 255)");
+    }
+    if (value.length() > MAX_VALUE_LENGTH) {
+        throw std::length_error("Value is too long! (max size: 2048)");
     }
 
     // get root page id
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try{
+        Meta = this->ReadPage(0);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what();
+        throw;
+    }
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
 
     //read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try{
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what();
+        throw;
+    }
 
     //loop to leaf page
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
-        currentPage = this->ReadPage(pageID);
+        try{
+            currentPage = this->ReadPage(rootPageID);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what();
+            throw;
+        }
     }
     // Should it increase key counter in metapage?
     bool increaseKeyCount = false;
@@ -257,14 +294,26 @@ bool Database::Set(const string& key, const string& value){
     LeafPage leaf(currentPage);
     if (leaf.WillFit(key, value)) {
         increaseKeyCount = leaf.InsertKeyValue(key, value); //true if new key was added
-        this->WriteBasicPage(leaf);
+        try{
+            this->WriteBasicPage(leaf);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what();
+            throw;
+        }
     }
     // If doesnt fit - optimize and then try
     else {
         leaf = leaf.Optimize();
         if (leaf.WillFit(key, value)) {
             increaseKeyCount = leaf.InsertKeyValue(key, value);
+            try{
             this->WriteBasicPage(leaf);
+            }
+            catch (std::exception& e) {
+                std::cerr << e.what();
+                throw;
+            }
         }
         // If still doesnt fit - split
         else {
@@ -275,9 +324,14 @@ bool Database::Set(const string& key, const string& value){
     }
     // update keyCounter
     if (increaseKeyCount) {
-        Meta = this->ReadPage(0);
-        Meta.Header()->keyNumber++;
-        this->UpdateMetaPage(Meta);
+        try {
+            Meta.Header()->keyNumber++;
+            this->UpdateMetaPage(Meta);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what();
+            throw;
+        }
     }
     cout << "SET OK\n";
     return true;
@@ -293,7 +347,13 @@ void Database::SplitLeafPage(LeafPage& LeafToSplit) {
     std::cout << "Splitting leaf page: " << LeafToSplit.Header()->pageID << std::endl;
 #endif
     // re-read page before working to get the newest data
-    LeafToSplit = this->ReadPage(LeafToSplit.Header()->pageID);
+    try {
+        LeafToSplit = this->ReadPage(LeafToSplit.Header()->pageID);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
     uint16_t rightPart = LeafToSplit.Header()->numberOfCells / 2;
     uint16_t leftPart = LeafToSplit.Header()->numberOfCells - rightPart;
     string keyToMoveToParent = LeafToSplit.GetKeyValue(LeafToSplit.Offsets()[leftPart-1]).key;
@@ -445,9 +505,9 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
     }
     // update latest grandchild parentpointer
     {
-    BasicPage GrandchildPage = this->ReadPage(*Child2.Special1());
-    GrandchildPage.Header()->parentPageID = Child2ID;
-    this->WriteBasicPage(GrandchildPage);
+        BasicPage GrandchildPage = this->ReadPage(*Child2.Special1());
+        GrandchildPage.Header()->parentPageID = Child2ID;
+        this->WriteBasicPage(GrandchildPage);
     }
     //add key to parent or create parent
     if (parentID == 0) {
@@ -866,8 +926,7 @@ pagingResult Database::GetFB(uint32_t pageSize, uint32_t pageNum) const{
 bool Database::Remove(const string& key) {
     // validation
     if (key.length() > MAX_KEY_LENGTH) {
-        cout << "Key is too long!\n";
-        return false;
+        throw std::length_error("Key is too long! (max length = 255)");
     }
 
     // get root page id
