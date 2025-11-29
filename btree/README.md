@@ -5,12 +5,12 @@ Puslapiais pagrįsta B+ medžio implementacija su Write-Ahead Logging (WAL) pala
 ## Funkcijos
 
 - **CRUD Operacijos**: Get, Set, Remove
-- **Range Queries**: GETFF (forward), GETFB (backward)
+- **Range Queries**: GETFF (forward), GETFB (backward), GETKEYS, GETKEYS(prefix)
 - **WAL**: Automatinis recovery po crash
 - **Page Splitting**: Automatinis puslapių dalijimas
 - **Lazy Deletion**: Žymėjimas kaip ištrinta (ištrina tik Optimize)
 - **Optimize**: Medžio perkūrimas, ištrintų įrašų šalinimas
--  **Interactive CLI**: Komandinės eilutės sąsaja
+-  **Interactive CLI**: Komandinės eilutės sąsaja 
 
 ## Kompiliavimas
 
@@ -209,7 +209,7 @@ make clean && make all
 ### Optimizacija
 
 **Dideliems duomenų kiekiams:**
-1. Didinti `PAGE_SIZE` (pvz. 8192 arba 16384)
+1. Didinti `PAGE_SIZE`
 2. Naudoti OPTIMIZE retai (tik kai daug ištrinta)
 3. Batch insertai su vienu OPTIMIZE pabaigoje
 
