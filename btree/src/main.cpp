@@ -27,4 +27,8 @@ int main(){
     }
 
 
+    auto result2= DatabaseSetTest.GetFF("A", 10);
+    for (auto a: result2) {
+        cout << a.key << ":" << a.value << endl;
+    }
 }

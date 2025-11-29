@@ -281,7 +281,7 @@ bool Database::Set(const string& key, const string& value){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
         try{
-            currentPage = this->ReadPage(rootPageID);
+            currentPage = this->ReadPage(pageID);
         }
         catch (std::exception& e) {
             std::cerr << e.what();
@@ -668,33 +668,53 @@ vector<leafNodeCell> Database::GetFF(const string &key, uint32_t n) const {
     vector<leafNodeCell> keyValuePairs;
     uint32_t counter = 0;
 
-    //check if key exists in database
-    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
-        cout << "No such key in database!\n";
-        return keyValuePairs;
+   //check key length
+    if (key.length() > MAX_KEY_LENGTH) {
+        throw std::length_error("Key is too long! (max length = 255)");
     }
 
     // get root page id
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try {
+        Meta = this->ReadPage(0);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
 
     // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try {
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     // loop to leaf
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
-        currentPage = this->ReadPage(pageID);
+
+        try {
+            currentPage = this->ReadPage(pageID);
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
     }
 
     //get keys from leaf page
     LeafPage leaf(currentPage);
-    int16_t index = leaf.FindKeyIndex(key);
+    uint16_t index = leaf.FindInsertPosition(key);
     for (uint16_t i = index; i < leaf.Header()->numberOfCells; i++) {
         auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
         keyValuePairs.push_back(cell);
@@ -706,7 +726,14 @@ vector<leafNodeCell> Database::GetFF(const string &key, uint32_t n) const {
 
     // traverse other leaves
     while (*leaf.Special2()!=0) {
-        leaf = ReadPage(*leaf.Special2());
+        try {
+            leaf = ReadPage(*leaf.Special2());
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
+
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keyValuePairs.push_back(leaf.GetKeyValue(leaf.Offsets()[i]));
             counter++;
@@ -715,6 +742,7 @@ vector<leafNodeCell> Database::GetFF(const string &key, uint32_t n) const {
             }
         }
     }
+
     return keyValuePairs;
 }
 
@@ -776,7 +804,7 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
 
     //get keys from leaf page
     LeafPage leaf(currentPage);
-    int16_t index = leaf.FindKeyIndex(key);
+    int16_t index = leaf.FindInsertPosition(key);
     for (int16_t i = index; i >= 0; i--) {
         auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
         keyValuePairs.push_back(cell);
