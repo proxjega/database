@@ -93,7 +93,7 @@ nvm install 18
 ```bash
 cd btree
 make all
-./build/main  # CLI interaktyvus režimas (nera)
+./build/main  # CLI interaktyvus režimas
 ```
 
 ### 2. Kompiliuoti Replikacijos Sistemą
