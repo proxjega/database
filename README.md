@@ -49,7 +49,7 @@ Puslapiais pagrįsta B+ medžio duomenų bazė su WAL palaikymu:
 - **Puslapių tipai**: MetaPage, LeafPage, InternalPage
 - **Operacijos**: Get, Set, Remove, Optimize
 - **WAL**: Automatinis recovery po crash
-- **Puslapių dydis**: 4KB (konfigūruojamas)
+- **Puslapių dydis**: 16KB (konfigūruojamas)
 
 **Žr. [btree/README.md](btree/README.md)**
 
@@ -93,7 +93,7 @@ nvm install 18
 ```bash
 cd btree
 make all
-./build/main  # CLI interaktyvus režimas
+./build/main  # CLI interaktyvus režimas (nera)
 ```
 
 ### 2. Kompiliuoti Replikacijos Sistemą
@@ -329,7 +329,7 @@ Sekti: https://www.geeksforgeeks.org/cpp/naming-convention-in-c/
 
 - **Max rakto ilgis**: 255 baitai
 - **Max reikšmės ilgis**: 2048 baitai
-- **Puslapio dydis**: 4096 baitai
+- **Puslapio dydis**: 16384 baitai
 - **Klasterio dydis**: 4 mazgai (fiksuotas)
 - **Heartbeat timeout**: 1500ms
 
