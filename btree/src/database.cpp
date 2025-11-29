@@ -730,11 +730,11 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
     vector<leafNodeCell> keyValuePairs;
     uint32_t counter = 0;
 
-    //check if key exists in database
-    if (key.length() > MAX_KEY_LENGTH || !this->Get(key).has_value()) {
-        cout << "No such key in database!\n";
-        return keyValuePairs;
+    //check key length
+    if (key.length() > MAX_KEY_LENGTH) {
+        throw std::length_error("Key is too long! (max length = 255)");
     }
+
 
     // get root page id
     MetaPage Meta;
