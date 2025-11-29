@@ -38,6 +38,7 @@ struct MetaPageHeader {
     uint32_t rootPageID;
     uint32_t lastPageID;
     uint64_t keyNumber;
+    uint64_t lastSequenceNumber;
     void CoutHeader();
 };
 

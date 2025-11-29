@@ -26,7 +26,8 @@ void PageHeader::CoutHeader()  {
 void MetaPageHeader::CoutHeader(){
     cout << "rootPageID: " << rootPageID << "\n"
          << "keyNum: " << keyNumber << "\n"
-         << "lastPageID: " << lastPageID << "\n\n";
+         << "lastPageID: " << lastPageID << "\n"
+         << "lastSeqeunceNumber: " << lastSequenceNumber << "\n\n";
 }
 
 // ---------------- Page ----------------
