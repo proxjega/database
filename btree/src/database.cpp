@@ -170,14 +170,19 @@ bool Database::WriteBasicPage(BasicPage &pageToWrite) const {
 bool Database::UpdateMetaPage(MetaPage &PageToWrite) const {
     ofstream databaseFile(this->getPath().string(), ios::in | ios::out | ios::binary);
     if (!databaseFile) {
-        return false; // could not open
+        throw std::runtime_error("Failed to open database file for reading");
     }
     databaseFile.seekp(0, ios::beg);
     if (!databaseFile.good()) {
-        return false;
+        throw std::runtime_error("seekp failed in UpdateMetaPage");
     }
-
-    databaseFile.write(PageToWrite.mData, Page::PAGE_SIZE);
+    try {
+        databaseFile.write(PageToWrite.mData, Page::PAGE_SIZE);
+    }
+    catch (std::exception &e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
     return !!databaseFile;
 }
 
