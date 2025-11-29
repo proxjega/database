@@ -1,3 +1,4 @@
+#include <exception>
 #include <iostream>
 #include <string>
 #include "../include/page.h"
@@ -17,12 +18,13 @@ int main(){
         for (int j = 0; j < 255; j++) {
             key.push_back(static_cast<char>(i));
         }
-        DatabaseSetTest.Set(key, key);
+        try {
+            DatabaseSetTest.Set(key, key);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what() << endl;
+        }
     }
 
 
-    auto result = DatabaseSetTest.GetKeys();
-    for (auto &key : result){
-        cout << key<< "\n";
-    }
 }
