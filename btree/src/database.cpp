@@ -1228,6 +1228,49 @@ bool Database::ApplyReplication(WalRecord walRecord) {
 
     return this->Remove(walRecord.key);
 }
+/**
+ * @brief Gets LSN from Meta page
+ *
+ * @return uint64_t LSN
+ */
+uint64_t Database::getLSN(){
+    MetaPage Meta;
+    try {
+        Meta = this->ReadMetaPage();
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+    return Meta.Header()->lastSequenceNumber;
+}
+
+/**
+ * @brief Writes LSN to MetaPage
+ *
+ * @param LSNToWrite
+ * @return
+ */
+bool Database::writeLSN(uint64_t LSNToWrite) {
+    MetaPage Meta;
+    try {
+        Meta = this->ReadMetaPage();
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+    Meta.Header()->lastSequenceNumber = LSNToWrite;
+    try {
+        this->UpdateMetaPage(Meta);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+    return true;
+}
+
 
 /**
  * @brief Cout whole database. For debug

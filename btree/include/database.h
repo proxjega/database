@@ -59,6 +59,10 @@ private:
     bool Remove(const string& key);
     void Optimize();
 
+    // methods for getting/writing lsn to metapage
+    uint64_t getLSN();
+    bool writeLSN(uint64_t LSNToWrite);
+
     // Wrapper metodai WAL metodams, kad būtų patogiau koduot.
     uint64_t ExecuteLogSetWithLSN(const string &key, const string &value);
     uint64_t ExecuteLogDeleteWithLSN(const string &key);
