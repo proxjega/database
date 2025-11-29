@@ -25,7 +25,9 @@ int main(){
             std::cerr << e.what() << endl;
         }
     }
-
+    cout << "LSN: " << DatabaseSetTest.getLSN() << endl;
+    DatabaseSetTest.writeLSN(54);
+    cout << "LSN: " << DatabaseSetTest.getLSN() << endl;
 
     auto result2= DatabaseSetTest.GetFF("A", 10);
     for (auto a: result2) {
