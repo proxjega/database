@@ -931,20 +931,40 @@ bool Database::Remove(const string& key) {
 
     // get root page id
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try {
+        Meta = this->ReadPage(0);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
     }
 
     // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try {
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     // loop to leaf
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(key);
-        currentPage = this->ReadPage(pageID);
+        try {
+            currentPage = this->ReadPage(pageID);
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
     }
 
     //get key from leaf page (if exists)
@@ -956,13 +976,27 @@ bool Database::Remove(const string& key) {
 
     // remove key if it exists and write pages
     leaf.RemoveKey(key);
-    this->WriteBasicPage(leaf);
+    try {
+        this->WriteBasicPage(leaf);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+
     Meta.Header()->keyNumber--;
-    this->UpdateMetaPage(Meta);
+    try {
+        this->UpdateMetaPage(Meta);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     cout << "Removed key: " << key << "\n";
     return true;
 }
+
 
 /**
  * @brief Optimize database. Needed after many removals
