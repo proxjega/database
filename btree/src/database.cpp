@@ -560,7 +560,13 @@ void Database::SplitInternalPage(InternalPage& InternalToSplit){
 vector<string> Database::GetKeys() const {
     // Read meta page for root page id
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try {
+        Meta = this->ReadPage(0);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
@@ -572,14 +578,27 @@ vector<string> Database::GetKeys() const {
     keys.reserve(keyNum);
 
     // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try {
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     // loop to first leaf
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint16_t firstOffset = internal.Offsets()[0];
         uint32_t pageID = internal.GetKeyAndPointer(firstOffset).childPointer;
-        currentPage = this->ReadPage(pageID);
+        try {
+            currentPage = this->ReadPage(pageID);
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
     }
 
     //loop first leaf
@@ -590,13 +609,20 @@ vector<string> Database::GetKeys() const {
 
     // loop other leaves
     while (*leaf.Special2()!=0) {
-        leaf = ReadPage(*leaf.Special2());
+        try {
+            leaf = ReadPage(*leaf.Special2());
+        }
+        catch (std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
         for (int i = 0; i < leaf.Header()->numberOfCells; i++) {
             keys.push_back(leaf.GetKeyValue(leaf.Offsets()[i]).key);
         }
     }
     return keys;
 }
+
 
 /**
  * @brief Get keys with given prefix
@@ -606,7 +632,14 @@ vector<string> Database::GetKeys() const {
  */
 vector<string> Database::GetKeys(const string &prefix) const {
     MetaPage Meta;
-    Meta = this->ReadPage(0);
+    try {
+        Meta = this->ReadPage(0);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
+
     uint32_t rootPageID = Meta.Header()->rootPageID;
     if (rootPageID == 0) {
         throw std::runtime_error("rootPageID is zero!");
@@ -616,13 +649,27 @@ vector<string> Database::GetKeys(const string &prefix) const {
     uint32_t prefixLength = prefix.length();
 
     // read root page
-    BasicPage currentPage = this->ReadPage(rootPageID);
+    BasicPage currentPage;
+    try {
+        currentPage = this->ReadPage(rootPageID);
+    }
+    catch (const std::exception& e) {
+        std::cerr << e.what() << "\n";
+        throw;
+    }
 
     // loop to page where prefix would be
     while (!currentPage.Header()->isLeaf){
         InternalPage internal(currentPage);
         uint32_t pageID = internal.FindPointerByKey(prefix);
-        currentPage = this->ReadPage(pageID);
+
+        try {
+            currentPage = this->ReadPage(pageID);
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
     }
     LeafPage currentLeaf(currentPage);
 
@@ -642,7 +689,14 @@ vector<string> Database::GetKeys(const string &prefix) const {
     }
     //loop other leaves
     while (*currentLeaf.Special2()!=0) {
-        currentLeaf = ReadPage(*currentLeaf.Special2());
+        try {
+            currentLeaf = ReadPage(*currentLeaf.Special2());
+        }
+        catch (const std::exception& e) {
+            std::cerr << e.what() << "\n";
+            throw;
+        }
+
         for (int i = 0; i < currentLeaf.Header()->numberOfCells; i++) {
             string key = currentLeaf.GetKeyValue(currentLeaf.Offsets()[i]).key;
             string substr = key.substr(0, prefixLength);
@@ -656,6 +710,8 @@ vector<string> Database::GetKeys(const string &prefix) const {
     }
     return keys;
 }
+
+
 /**
  * @brief Gets n key value pairs from given key
  *
