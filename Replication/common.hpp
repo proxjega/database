@@ -318,6 +318,98 @@ static inline std::vector<std::string> split(const std::string& string, char del
   return parts;
 }
 
+/**
+ * Format value with length prefix for sending over protocol
+ * Example: "Hello World" -> "11 Hello World"
+ */
+static inline std::string format_length_prefixed_value(const std::string& value) {
+  return std::to_string(value.length()) + " " + value;
+}
+
+/**
+ * Parse length-prefixed value from token stream
+ * Handles values that may span multiple recv() calls or contain spaces
+ *
+ * @param tokens - Tokenized command (e.g., ["SET", "key", "11", "Hello", "World"])
+ * @param start_idx - Index where value_len starts (e.g., 2 for SET command)
+ * @param socket - Socket to read remaining bytes if needed
+ * @param out_value - Output parameter for parsed value
+ * @return true if successfully parsed, false otherwise
+ */
+static inline bool parse_length_prefixed_value(
+    const std::vector<std::string>& tokens,
+    size_t start_idx,
+    sock_t socket,
+    std::string& out_value
+) {
+  if (start_idx >= tokens.size()) {
+    log_line(LogLevel::WARN, "parse_length_prefixed_value: start_idx out of bounds");
+    return false;
+  }
+
+  // Parse value length
+  size_t value_len = 0;
+  try {
+    value_len = std::stoull(tokens[start_idx]);
+  } catch (...) {
+    log_line(LogLevel::WARN, "Invalid value_len: " + tokens[start_idx]);
+    return false;
+  }
+
+  // Reconstruct value from remaining tokens
+  std::string reconstructed;
+  for (size_t i = start_idx + 1; i < tokens.size(); i++) {
+    if (i > start_idx + 1) reconstructed += " ";
+    reconstructed += tokens[i];
+  }
+
+  // If we already have the complete value, return it
+  if (reconstructed.length() == value_len) {
+    out_value = reconstructed;
+    return true;
+  }
+
+  // If we have more than expected, something is wrong
+  if (reconstructed.length() > value_len) {
+    out_value = reconstructed.substr(0, value_len);
+    return true;
+  }
+
+  // Need more bytes from socket (value was split across recv() calls or contains newlines)
+  // Note: recv_line() strips the \n, so we need to account for it if value contains newlines
+  size_t bytes_needed = value_len - reconstructed.length();
+  out_value = reconstructed;
+
+  // If reconstructed has content but we need more, add back the newline that recv_line() stripped
+  if (bytes_needed > 0 && reconstructed.length() > 0) {
+    out_value += "\n";
+    bytes_needed -= 1;
+  }
+
+  if (bytes_needed > 0 && socket != NET_INVALID) {
+    std::vector<char> buffer(bytes_needed);
+    size_t total_read = 0;
+
+    while (total_read < bytes_needed) {
+#ifdef _WIN32
+      int received = recv(socket, buffer.data() + total_read,
+                          (int)(bytes_needed - total_read), 0);
+#else
+      ssize_t received = recv(socket, buffer.data() + total_read,
+                             bytes_needed - total_read, 0);
+#endif
+      if (received <= 0) {
+        log_line(LogLevel::ERROR, "Failed to read remaining value bytes");
+        return false;
+      }
+      total_read += received;
+    }
+    out_value.append(buffer.data(), bytes_needed);
+  }
+
+  return out_value.length() == value_len;
+}
+
 /* ===================== WAL definitions & I/O ===================== */
 
 // Paverčia Op į tekstą ("SET" arba "DEL").

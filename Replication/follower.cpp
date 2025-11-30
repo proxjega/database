@@ -77,7 +77,7 @@ static void read_only_server(uint16_t port) {
                             const std::string& key = tokens[1];
                             auto result = duombaze->Get(key);
                             if (result.has_value()) {
-                                send_all(client_socket, "VALUE " + result->value + "\n");
+                                send_all(client_socket, "VALUE " + format_length_prefixed_value(result->value) + "\n");
                             } else {
                                 send_all(client_socket, "NOT_FOUND\n");
                             }
@@ -89,7 +89,7 @@ static void read_only_server(uint16_t port) {
                                 auto results = duombaze->GetFF(tokens[1], n);
 
                                 for (const auto& cell : results) {
-                                    send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+                                    send_all(client_socket, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value) + "\n");
                                 }
                                 send_all(client_socket, "END\n");
                             } catch (const std::exception& e) {
@@ -103,7 +103,7 @@ static void read_only_server(uint16_t port) {
                                 auto results = duombaze->GetFB(tokens[1], n);
 
                                 for (const auto& cell : results) {
-                                    send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+                                    send_all(client_socket, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value) + "\n");
                                 }
                                 send_all(client_socket, "END\n");
                             } catch (const std::exception& e) {
@@ -296,9 +296,9 @@ int main(int argc, char** argv) {
                 }
 
                 try {
-                    // --- WRITE lsn key value ---
+                    // --- WRITE lsn key value_len value ---
                     if (tokens[0] == "WRITE") {
-                        if (tokens.size() < 4) {
+                        if (tokens.size() < 5) {
                             flog(LogLevel::WARN, "malformed WRITE line: " + line);
                             continue;
                         }
@@ -317,8 +317,16 @@ int main(int argc, char** argv) {
                             continue;
                         }
 
+                        std::string key = tokens[2];
+                        std::string value;
+
+                        if (!parse_length_prefixed_value(tokens, 3, repl_socket, value)) {
+                            flog(LogLevel::ERROR, "failed to parse value in WRITE");
+                            continue;
+                        }
+
                         // Naujas lsn – sukuriam WalRecord objektą
-                        WalRecord walRecord(lsn, WalOperation::SET, tokens[2], tokens[3]);
+                        WalRecord walRecord(lsn, WalOperation::SET, key, value);
 
                         // Replikuojamę lyderį.
                         if (duombaze->ApplyReplication(walRecord)) {

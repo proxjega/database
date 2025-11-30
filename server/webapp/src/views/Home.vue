@@ -39,7 +39,7 @@
 
             <div v-if="retrievedValue" class="mt-3">
               <div class="alert alert-success">
-                <strong>Reikšmė:</strong> {{ retrievedValue }}
+                <strong>Reikšmė:</strong> <span style="white-space: pre-wrap;">{{ retrievedValue }}</span>
               </div>
             </div>
           </div>
@@ -167,7 +167,7 @@
                   <tbody>
                     <tr v-for="item in getffResults" :key="item.key">
                       <td><code>{{ item.key }}</code></td>
-                      <td>{{ item.value }}</td>
+                      <td style="white-space: pre-wrap;">{{ item.value }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -239,7 +239,7 @@
                   <tbody>
                     <tr v-for="item in getfbResults" :key="item.key">
                       <td><code>{{ item.key }}</code></td>
-                      <td>{{ item.value }}</td>
+                      <td style="white-space: pre-wrap;">{{ item.value }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -303,6 +303,7 @@ export default {
 
       try {
         const result = await api.get(this.getKey);
+        console.log(result)
         this.retrievedValue = result.value;
         this.message = `Raktas "${this.getKey}" sėkmingai gautas.`;
       } catch (err) {

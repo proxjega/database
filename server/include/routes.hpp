@@ -9,6 +9,7 @@
 #include <sstream>
 #include <vector>
 #include <fstream>
+#include <iomanip>
 
 using namespace li;
 
@@ -31,8 +32,57 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
       if (recv_line(s, response)) {
         auto tokens = split(trim(response), ' ');
         if (tokens.size() >= 3 && tokens[0] == "REDIRECT") {
-          out_host = tokens[1];
-          out_port = std::stoi(tokens[2]);
+          std::string redirect_host = tokens[1];
+          uint16_t redirect_port = std::stoi(tokens[2]);
+          net_close(s);
+
+          // Verify the REDIRECT target is actually alive (with short timeout)
+          sock_t verify_s = tcp_connect(redirect_host, redirect_port);
+          if (verify_s != NET_INVALID) {
+            // Set aggressive 500ms timeout to quickly detect dead leaders
+            set_socket_timeouts(verify_s, 500);
+
+            // Send a test command to verify it responds
+            send_all(verify_s, "GET __verify__\n");
+            std::string verify_response;
+            if (recv_line(verify_s, verify_response)) {
+              auto verify_tokens = split(trim(verify_response), ' ');
+              // Leader should respond, not timeout
+              if (verify_tokens.size() > 0 &&
+                  (verify_tokens[0] == "VALUE" || verify_tokens[0] == "NOT_FOUND")) {
+                net_close(verify_s);
+                out_host = redirect_host;
+                out_port = redirect_port;
+                return true;
+              }
+            }
+            net_close(verify_s);
+          }
+          // REDIRECT target is dead, continue to next follower
+        }
+      }
+      net_close(s);
+    }
+  }
+
+  // Tier 2: Direct leader verification
+  // Check if port 7001 is not only open, but actually responds as a leader
+  for (const auto& host : CLUSTER_NODES) {
+    sock_t s = tcp_connect(host, 7001);
+    if (s != NET_INVALID) {
+      // Set aggressive 500ms timeout to quickly detect dead/unresponsive leaders
+      set_socket_timeouts(s, 500);
+
+      // Send a test GET command to verify it's actually a functioning leader
+      send_all(s, "GET __health_check__\n");
+
+      std::string response;
+      if (recv_line(s, response)) {
+        auto tokens = split(trim(response), ' ');
+        // Leader should respond with either VALUE or NOT_FOUND, not REDIRECT or ERR
+        if (tokens.size() > 0 && (tokens[0] == "VALUE" || tokens[0] == "NOT_FOUND")) {
+          out_host = host;
+          out_port = 7001;
           net_close(s);
           return true;
         }
@@ -41,17 +91,7 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
     }
   }
 
-  // Tier 2: Port listening check
-  for (const auto& host : CLUSTER_NODES) {
-    sock_t s = tcp_connect(host, 7001);
-    if (s != NET_INVALID) {
-      out_host = host;
-      out_port = 7001;
-      net_close(s);
-      return true;
-    }
-  }
-
+  // No leader found
   return false;
 }
 
@@ -59,6 +99,33 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
 inline uint64_t get_timestamp_ms() {
   using namespace std::chrono;
   return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+/**
+ * Properly escape JSON strings to handle special characters
+ * Escapes: " \ \b \f \n \r \t and control characters
+ */
+inline std::string json_escape(const std::string& str) {
+  std::ostringstream escaped;
+  for (char c : str) {
+    switch (c) {
+      case '"':  escaped << "\\\""; break;
+      case '\\': escaped << "\\\\"; break;
+      case '\b': escaped << "\\b";  break;
+      case '\f': escaped << "\\f";  break;
+      case '\n': escaped << "\\n";  break;
+      case '\r': escaped << "\\r";  break;
+      case '\t': escaped << "\\t";  break;
+      default:
+        if ('\x00' <= c && c <= '\x1f') {
+          escaped << "\\u" << std::hex << std::setw(4)
+                  << std::setfill('0') << static_cast<int>(c);
+        } else {
+          escaped << c;
+        }
+    }
+  }
+  return escaped.str();
 }
 
 inline auto make_routes() {
@@ -189,8 +256,8 @@ inline auto make_routes() {
 
         for (size_t i = 0; i < result.results.size(); i++) {
           if (i > 0) json << ",";
-          json << "{\"key\":\"" << result.results[i].first << "\","
-               << "\"value\":\"" << result.results[i].second << "\"}";
+          json << "{\"key\":\"" << json_escape(result.results[i].first) << "\","
+               << "\"value\":\"" << json_escape(result.results[i].second) << "\"}";
         }
 
         json << "],\"count\":" << result.results.size() << "}";
@@ -231,8 +298,8 @@ inline auto make_routes() {
 
         for (size_t i = 0; i < result.results.size(); i++) {
           if (i > 0) json << ",";
-          json << "{\"key\":\"" << result.results[i].first << "\","
-               << "\"value\":\"" << result.results[i].second << "\"}";
+          json << "{\"key\":\"" << json_escape(result.results[i].first) << "\","
+               << "\"value\":\"" << json_escape(result.results[i].second) << "\"}";
         }
 
         json << "],\"count\":" << result.results.size() << "}";
@@ -268,19 +335,37 @@ inline auto make_routes() {
 
   // Health check endpoint - returns current leader connection info
   api.get("/api/health") = [db_client](http_request& req, http_response& res) {
-    std::string leader_host = db_client->get_leader_host();
-    uint16_t leader_port = db_client->get_leader_port();
+    try {
+      // Discover actual current leader (not static config)
+      std::string leader_host;
+      uint16_t leader_port = 7001;
 
-    // Build JSON response manually for better control
-    std::ostringstream json;
-    json << "{"
-         << "\"status\":\"ok\","
-         << "\"leader_host\":\"" << leader_host << "\","
-         << "\"leader_port\":" << leader_port
-         << "}";
+      if (discover_leader_from_cluster(leader_host, leader_port)) {
+        // Leader is active
+        std::ostringstream json;
+        json << "{"
+             << "\"status\":\"ok\","
+             << "\"leader_host\":\"" << leader_host << "\","
+             << "\"leader_port\":" << leader_port
+             << "}";
 
-    res.set_header("Content-Type", "application/json");
-    res.write(json.str());
+        res.set_header("Content-Type", "application/json");
+        res.write(json.str());
+      } else {
+        // No leader available (election in progress or all nodes down)
+        res.set_status(503);
+        res.write_json(
+          s::status = "unavailable",
+          s::error = "No leader available - cluster may be in election"
+        );
+      }
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(
+        s::status = "error",
+        s::error = std::string("Health check failed: ") + e.what()
+      );
+    }
   };
 
   // GET /api/leader - Discover current cluster leader
