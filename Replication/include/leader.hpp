@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../include/common.hpp"
+#include "common.hpp"
 #include "../../btree/include/database.h"
 #include <vector>
 #include <condition_variable>
@@ -25,6 +25,7 @@ struct FollowerConnection {
   sock_t   followerSocket{NET_INVALID};
   uint64_t ackedUptoLsn{0};
   bool     isAlive{true};
+  mutex    connectionMutex;
 };
 
 class Leader {
@@ -61,9 +62,17 @@ private:
     void ServeClients();
     void HandleClient(sock_t clientSocket);
 
+    // Helper'iai, kad nebūtų painus kodas.
+    void HandleSet(sock_t clientSocket, const vector<string> &tokens);
+    void HandleDel(sock_t clientSocket, const vector<string> &tokens);
+    void HandleGet(sock_t clientSocket, const string &key);
+    void HandleRangeQuery(sock_t clientSocket, const vector<string> &tokens, bool forward);
+    void HandleOptimize(sock_t clientSocket);
+
     // Logic
     void BroadcastWalRecord(const WalRecord &walRecord);
     size_t CountAcks(uint64_t lsn);
+    void WaitForAcks(uint64_t lsn);
 
 public:
     Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, string host);

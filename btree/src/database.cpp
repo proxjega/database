@@ -38,7 +38,7 @@ Database::Database(const string &name) : name(name), wal(name) {
         header.lastPageID = 1;
         header.rootPageID = 1;
         header.keyNumber = 0;
-        header.lastSequenceNumber = 1;
+        header.lastSequenceNumber = 0;
         MetaPage Meta(header);
         if (!this->UpdateMetaPage(Meta)) {
             throw std::runtime_error("Error updating meta page\n");
@@ -1203,6 +1203,7 @@ bool Database::RecoverFromWal() {
     }
 
     bool allSuccess = true; // Tik tam, kad patikrinti ar visi įrašai iš WAL sėkmingai įsirašė į B+ medį.
+    uint64_t maxLsn = 0;
 
     std::cout << "RecoverFromWal: Applying " << records.size() << " records...\n";
 
@@ -1217,9 +1218,12 @@ bool Database::RecoverFromWal() {
         }
     }
 
-    // Išvalome visus WAL, jeigu atsistatymo metu visi įrašai sėkmingai buvo įsirašyti į B+ medį.
+    // Po recovery, atnaujiname MetaPage LSN.
     if (allSuccess) {
-        // this->wal.ClearAll();
+        uint64_t currentMetaLsn = this->getLSN();
+        if (maxLsn > currentMetaLsn) {
+            this->writeLSN(maxLsn);
+        }
         return true;
     }
 
@@ -1246,8 +1250,13 @@ uint64_t Database::ExecuteLogSetWithLSN(const string &key, const string &value) 
         return 0;
     }
 
-    // 3. Grąžiname LSN.
-    return this->wal.GetCurrentSequenceNumber();
+    // 3. Gauname naują LSN iš WAL.
+    auto newLsn = this->wal.GetCurrentSequenceNumber();
+
+    // 4. Rašome naują LSN į MetaPageHeader LSN.
+    this->writeLSN(newLsn);
+
+    return newLsn;
 }
 
 /**
@@ -1264,8 +1273,13 @@ uint64_t Database::ExecuteLogDeleteWithLSN(const string &key) {
     // 2. Triname iš B+ medžio.
     this->Remove(key);
 
-    // 3. Gražiname LSN.
-    return this->wal.GetCurrentSequenceNumber();
+    // 3. Gauname naują LSN iš WAL.
+    auto newLsn = this->wal.GetCurrentSequenceNumber();
+
+    // 4. Rašome naują LSN į MetaPageHeader LSN.
+    this->writeLSN(newLsn);
+
+    return newLsn;
 }
 
 /**
@@ -1280,14 +1294,40 @@ bool Database::ApplyReplication(WalRecord walRecord) {
     }
 
     // 2. Rašome į B+ medį.
+    bool success;
     if (walRecord.operation == WalOperation::SET) {
-        return this->Set(walRecord.key, walRecord.value);
+        success = this->Set(walRecord.key, walRecord.value);
+    } else {
+        this->Remove(walRecord.key);
+        success = true;
     }
 
-    this->Remove(walRecord.key);
-    return true;
+    // 3. Rašome naują LSN į MetaPageHeader LSN.
+    if (success) {
+        this->writeLSN(walRecord.lsn);
+    }
 
+    return true;
 }
+
+/**
+ * @brief Retrieves all WAL records with an LSN greater than the provided lsn.
+ * Used by Leader to sync new Followers.
+ */
+vector<WalRecord> Database::GetWalRecordsSince(uint64_t lastKnownLsn) {
+    // 1. Read all records from WAL file
+    auto allRecords = this->wal.ReadAll();
+
+    // 2. Filter records that are newer than lastKnownLsn
+    vector<WalRecord> newRecords;
+    for (const auto& record : allRecords) {
+        if (record.lsn > lastKnownLsn) {
+            newRecords.push_back(record);
+        }
+    }
+    return newRecords;
+}
+
 /**
  * @brief Gets LSN from Meta page
  *
