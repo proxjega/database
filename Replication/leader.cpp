@@ -54,7 +54,7 @@ static void leader_announce_thread(const std::string& host, uint16_t client_port
 static void broadcast_walRecord(const WalRecord &walRecord) {
   std::string message;
   if (walRecord.operation == WalOperation::SET) {
-    message = "WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n";
+    message = "WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + format_length_prefixed_value(walRecord.value) + "\n";
   } else {
     message = "DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n";
   }
@@ -105,7 +105,7 @@ static void follower_thread(std::shared_ptr<FollowerConn> follower) {
     auto missingRecords = duombaze->GetWalRecordsSince(last_applied_lsn);
       for (const auto& walRecord : missingRecords) {
         std::string message = (walRecord.operation == WalOperation::SET)
-          ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n")
+          ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + format_length_prefixed_value(walRecord.value) + "\n")
           : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
 
         if (!send_all(follower->follower_socket, message)) {
@@ -226,18 +226,20 @@ static void serve_clients(uint16_t client_port) {
              continue;
           }
 
-          // --- SET/PUT <key> <value> ---
-          if ((tokens[0] == "PUT" || tokens[0] == "SET") && tokens.size() >= 3) {
-            uint64_t newLsn = 0;
-            WalRecord walRecord(newLsn, WalOperation::SET, tokens[1], tokens[2]);
+          // --- SET/PUT <key> <value_len> <value> ---
+          if ((tokens[0] == "PUT" || tokens[0] == "SET") && tokens.size() >= 4) {
+            std::string key = tokens[1];
+            std::string value;
 
-            newLsn = duombaze->ExecuteLogSetWithLSN(walRecord.key, walRecord.value);
+            if (!parse_length_prefixed_value(tokens, 2, client_socket, value)) {
+              send_all(client_socket, "ERR_INVALID_VALUE_FORMAT\n");
+              continue;
+            }
+
+            uint64_t newLsn = duombaze->ExecuteLogSetWithLSN(key, value);
 
             if (newLsn > 0) {
-              walRecord.lsn = newLsn;
-              walRecord.operation = WalOperation::SET;
-              walRecord.key = tokens[1];
-              walRecord.value = tokens[2];
+              WalRecord walRecord(newLsn, WalOperation::SET, key, value);
 
               // Broadcastinam follower'iams
               broadcast_walRecord(walRecord);
@@ -287,7 +289,7 @@ static void serve_clients(uint16_t client_port) {
             if (!result.has_value()) {
               send_all(client_socket, "NOT_FOUND\n");
             } else {
-              send_all(client_socket, "VALUE " + result->value + "\n");
+              send_all(client_socket, "VALUE " + format_length_prefixed_value(result->value) + "\n");
             }
           }
           // --- GETFF <key> <n> - Forward range query ---
@@ -297,7 +299,7 @@ static void serve_clients(uint16_t client_port) {
               auto results = duombaze->GetFF(tokens[1], n);
 
               for (const auto& cell : results) {
-                send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+                send_all(client_socket, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value) + "\n");
               }
               send_all(client_socket, "END\n");
             } catch (const std::exception& e) {
@@ -311,7 +313,7 @@ static void serve_clients(uint16_t client_port) {
               auto results = duombaze->GetFB(tokens[1], n);
 
               for (const auto& cell : results) {
-                send_all(client_socket, "KEY_VALUE " + cell.key + " " + cell.value + "\n");
+                send_all(client_socket, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value) + "\n");
               }
               send_all(client_socket, "END\n");
             } catch (const std::exception& e) {
