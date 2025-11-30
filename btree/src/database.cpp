@@ -1213,10 +1213,7 @@ bool Database::RecoverFromWal() {
                 allSuccess = false; // Pažymime, jog nepavyko įrašas.
             }
         } else if (record.operation == WalOperation::DELETE) {
-            if(!this->Remove(record.key)) {
-                std::cerr << "Failed to recover delete: " << record.key << "\n";
-                allSuccess = false; // Pažymime, jog nepavyko įrašas.
-            }
+            this->Remove(record.key);
         }
     }
 
@@ -1287,7 +1284,9 @@ bool Database::ApplyReplication(WalRecord walRecord) {
         return this->Set(walRecord.key, walRecord.value);
     }
 
-    return this->Remove(walRecord.key);
+    this->Remove(walRecord.key);
+    return true;
+
 }
 /**
  * @brief Gets LSN from Meta page

@@ -1,5 +1,5 @@
 #pragma once
-#include "../../Replication/common.hpp"
+#include "../../Replication/include/common.hpp"
 #include <string>
 #include <optional>
 #include <vector>
