@@ -1,0 +1,74 @@
+#pragma once
+
+#include "../include/common.hpp"
+#include "../../btree/include/database.h"
+#include <vector>
+#include <condition_variable>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <thread>
+
+using std::string;
+using std::vector;
+using std::unique_ptr;
+using std::shared_ptr;
+using std::mutex;
+using std::condition_variable;
+using std::thread;
+using std::atomic;
+
+// Informacija apie vieną follower'io ryšį leader'yje.
+// Laikom socket'ą, iki kokio lsn follower'is patvirtino (ACK),
+// ir ar jis dar laikomas gyvu.
+struct FollowerConnection {
+  sock_t   followerSocket{NET_INVALID};
+  uint64_t ackedUptoLsn{0};
+  bool     isAlive{true};
+};
+
+class Leader {
+private:
+    // Configuration
+    string dbName;
+    uint16_t clientPort;
+    uint16_t followerPort;
+    int requiredAcks;
+    string host;
+
+    // State
+    unique_ptr<Database> duombaze;
+    vector<shared_ptr<FollowerConnection>> followers;
+    bool running{true};
+
+    // Synchronization
+    mutex mtx;
+    condition_variable conditionVariable;
+
+    // Thread Management
+    thread announceThread;
+    thread followerAcceptThread;
+    thread clientAcceptThread;
+
+    // We store listening sockets to close them in destructor (waking up accept threads)
+    atomic<sock_t> clientListenSocket{NET_INVALID};
+    atomic<sock_t> followerListenSocket{NET_INVALID};
+
+    // Thread Loops
+    void AnnouncePresence();
+    void AcceptFollowers();
+    void HandleFollower(shared_ptr<FollowerConnection> follower);
+    void ServeClients();
+    void HandleClient(sock_t clientSocket);
+
+    // Logic
+    void BroadcastWalRecord(const WalRecord &walRecord);
+    size_t CountAcks(uint64_t lsn);
+
+public:
+    Leader(const string &dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, const string &host);
+    ~Leader();
+
+    // Main loop: starts threads and blocks.
+    void Run();
+};
