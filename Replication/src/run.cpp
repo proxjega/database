@@ -479,12 +479,11 @@ static void leader_heartbeat() {
 // 2) Pasižymi CANDIDATE, balsuoja už save
 // 3) Išsiunčia VOTE_REQ visiems reachinamiems node'ams
 // 4) Laukia balsų arba timeout'o
+// -------- Elections: tikra dauguma iš VISŲ mazgų --------
 static void start_election() {
   bool expected = false;
-  // Uždedam „lock“, kad vienu metu tik vienas election galėtų būti.
-  if (!g_election_inflight.compare_exchange_strong(expected, true)) {
-    return;
-  }
+  if (!g_election_inflight.compare_exchange_strong(expected, true))
+    return; // jau vyksta rinkimai
 
   int new_term = g_current_term.load() + 1;
   g_current_term  = new_term;
@@ -493,23 +492,27 @@ static void start_election() {
   g_cluster_state.state = NodeState::CANDIDATE;
   g_my_last_seq   = compute_my_last_seq();
 
-  // Už save – 1 balsas
+  // balsas už save
   g_votes_received = 1;
+
+  const int total_nodes   = CLUSTER_N;
+  const int requiredVotes = total_nodes / 2 + 1;   // tikra dauguma iš VISŲ
 
   run_log(
     g_cluster_state,
     g_self_id,
     RunLogLevel::INFO,
     "start election term " + std::to_string(g_current_term.load()) +
-    " lastSeq=" + std::to_string(g_my_last_seq.load())
+    " lastSeq=" + std::to_string(g_my_last_seq.load()) +
+    " totalNodes=" + std::to_string(total_nodes) +
+    " requiredVotes=" + std::to_string(requiredVotes)
   );
 
-  // reachable_nodes – tie, su kuriais pavyko užmegzti TCP jungtį
-  int reachable_nodes = 1; // mes patys
+  // Išsiunčiam VOTE_REQ visiems kitiems (net jei jų nepasiekiam)
+  int reachable_nodes = 1; // save skaičiuojam
   for (auto& node : CLUSTER) {
-    if (node.id == g_self_id) {
-      continue;
-    }
+    if (node.id == g_self_id) continue;
+
     sock_t s = tcp_connect(node.host, node.port);
     if (s != NET_INVALID) {
       reachable_nodes++;
@@ -520,14 +523,19 @@ static void start_election() {
         std::to_string(g_my_last_seq.load()) + "\n"
       );
       net_close(s);
+    } else {
+      run_log(
+        g_cluster_state,
+        g_self_id,
+        RunLogLevel::WARN,
+        "election: cannot reach node " + std::to_string(node.id) +
+        " (" + node.host + ":" + std::to_string(node.port) + ")"
+      );
     }
   }
 
-  // Reikalingas balsų skaičius = majority iš reachable_nodes
-  int required_votes = (reachable_nodes / 2) + 1;
-
-  // Jeigu esam vienintelis reachable node – iškart tampam leader'iu.
-  if (required_votes <= 1) {
+  // Specialus atvejis – klasteryje tik 1 mazgas
+  if (total_nodes == 1) {
     g_cluster_state.state    = NodeState::LEADER;
     g_cluster_state.leaderId = g_self_id;
     g_leader_id              = g_self_id;
@@ -539,7 +547,7 @@ static void start_election() {
       g_self_id,
       RunLogLevel::INFO,
       "became LEADER term " + std::to_string(g_current_term.load()) +
-      " (single reachable node)"
+      " (single-node cluster)"
     );
 
     std::thread(leader_heartbeat).detach();
@@ -548,29 +556,32 @@ static void start_election() {
     return;
   }
 
-  // Laukiam balsų iki election_timeout pabaigos
-  int election_timeout = random_election_timeout_ms();
-  auto deadline        = now_ms() + election_timeout;
+  // Rinkimų laukimo langas
+  int  election_timeout = random_election_timeout_ms();
+  auto deadline         = now_ms() + election_timeout;
 
   while (now_ms() < deadline) {
-    // Jei rinkimų metu pasirodo kito leaderio heartbeat – atsitraukiam
+    // Jei per rinkimus pamatėm kitą leaderį – atsitraukiam
     if (now_ms() - g_last_heartbeat_ms.load() <= HEARTBEAT_TIMEOUT_MS &&
         g_cluster_state.state != NodeState::LEADER) {
-      run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
-              "another leader detected during election, reverting to FOLLOWER");
+      run_log(
+        g_cluster_state,
+        g_self_id,
+        RunLogLevel::INFO,
+        "another leader detected during election, reverting to FOLLOWER"
+      );
       g_cluster_state.state = NodeState::FOLLOWER;
       g_election_inflight   = false;
       return;
     }
 
-    // Gal rinkimų metu jau spėjom patys tapti LEADER kita logikos šaka
     if (g_cluster_state.state == NodeState::LEADER) {
       g_election_inflight = false;
       return;
     }
 
-    // Patikrinam, ar jau turim daugumą balsų
-    if (g_votes_received.load() >= required_votes) {
+    // ČIA – tikra dauguma iš visų: votes >= requiredVotes
+    if (g_votes_received.load() >= requiredVotes) {
       g_cluster_state.state    = NodeState::LEADER;
       g_cluster_state.leaderId = g_self_id;
       g_leader_id              = g_self_id;
@@ -583,7 +594,8 @@ static void start_election() {
         RunLogLevel::INFO,
         "became LEADER term " + std::to_string(g_current_term.load()) +
         " with votes=" + std::to_string(g_votes_received.load()) +
-        " (required=" + std::to_string(required_votes) + ")"
+        " (required=" + std::to_string(requiredVotes) + ", reachable=" +
+        std::to_string(reachable_nodes) + ")"
       );
 
       std::thread(leader_heartbeat).detach();
@@ -595,10 +607,18 @@ static void start_election() {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 
-  // Jei pasibaigė election timeout ir daugumos negavom – grįžtam į FOLLOWER.
-  run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
-          "election term " + std::to_string(g_current_term.load()) +
-          " timed out without majority; reverting to FOLLOWER");
+  // Jei nelaimėjom – reiškia arba nėra daugumos, arba yra splitas
+  run_log(
+    g_cluster_state,
+    g_self_id,
+    RunLogLevel::WARN,
+    "election term " + std::to_string(g_current_term.load()) +
+    " timed out without majority; votes=" +
+    std::to_string(g_votes_received.load()) +
+    " required=" + std::to_string(requiredVotes) +
+    " reachable=" + std::to_string(reachable_nodes) +
+    " -> NO LEADER (no quorum)"
+  );
 
   g_cluster_state.state = NodeState::FOLLOWER;
   g_election_inflight   = false;
