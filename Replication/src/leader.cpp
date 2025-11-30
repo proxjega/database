@@ -37,12 +37,15 @@ Leader::~Leader() {
   if (this->followerAcceptThread.joinable()) {
     this->followerAcceptThread.join();
   }
+
+  if (this->announceThread.joinable()) {
+    this->announceThread.join();
+  }
 }
 
 void Leader::Run() {
   // 1. Paleidžiam periodinį "[Leader] host port" (Announce)
-  std::thread announce_thr(&Leader::AnnouncePresence, this);
-  announce_thr.detach(); // thread'as gyvena iki proceso pabaigos
+  std::thread announceThread(&Leader::AnnouncePresence, this);
 
   // 2. Paleidžiam followerių priėmėją atskiram threade
   this->followerAcceptThread = std::thread(&Leader::AcceptFollowers, this);
@@ -61,12 +64,12 @@ void Leader::Run() {
 void Leader::AnnouncePresence() {
   try {
     while (this->running) {
-      log_line(LogLevel::INFO, std::string("[Leader] ") + this->host + " " + std::to_string(this->clientPort));
+      log_line(LogLevel::INFO, string("[Leader] ") + this->host + " " + std::to_string(this->clientPort));
       std::this_thread::sleep_for(std::chrono::seconds(Consts::SLEEP_TIME_MS));
     }
   } catch (const std::exception& ex) {
     log_line(LogLevel::ERROR,
-             std::string("Leader announce thread exception: ") + ex.what());
+             string("Leader announce thread exception: ") + ex.what());
   } catch (...) {
     log_line(LogLevel::ERROR, "Leader announce thread unknown exception");
   }
@@ -75,7 +78,7 @@ void Leader::AnnouncePresence() {
 // Klausosi naujų follower'io jungčių nurodytame porte ir kiekvieną naują
 // follower'į prideda į followers sąrašą bei paleidžia jam follower_thread.
 void Leader::AcceptFollowers() {
-  sock_t listenSocket = tcp_accept(this->followerPort);
+  sock_t listenSocket = tcp_listen(this->followerPort);
   if (listenSocket == NET_INVALID) {
     std::cerr << "Follower listen failed\n";
     log_line(LogLevel::ERROR, "Follower listen failed on port " + std::to_string(this->followerPort));
@@ -99,7 +102,7 @@ void Leader::AcceptFollowers() {
       this->followers.push_back(followerConnection);
     }
 
-    thread(&Leader::HandleFollower, this, followerConnection);
+    thread(&Leader::HandleFollower, this, followerConnection).detach();
   }
 }
 
@@ -134,7 +137,10 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
 
     // 2. Persiunčiam follower'iui visus įrašus nuo jo paskutinio turimo LSN.
     auto missingRecords = this->duombaze->GetWalRecordsSince(lastAppliedLsn);
-    for (const auto &walRecord : missingRecords) {
+    {
+      std::lock_guard<mutex> ioLock(follower->connectionMutex);
+
+      for (const auto &walRecord : missingRecords) {
       string message = (walRecord.operation == WalOperation::SET)
           ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n")
           : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
@@ -144,6 +150,7 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
           follower->isAlive = false;
           return;
         }
+    }
     }
 
     if (!missingRecords.empty()) {
@@ -171,7 +178,7 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
       }
     }
   } catch (const std::exception& ex) {
-    log_line(LogLevel::ERROR, std::string("Exception in follower_thread: ") + ex.what());
+    log_line(LogLevel::ERROR, string("Exception in follower_thread: ") + ex.what());
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown exception in follower_thread");
   }
@@ -184,15 +191,16 @@ void Leader::BroadcastWalRecord(const WalRecord &walRecord) {
     ? "WRITE " + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n"
     : "DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n";
 
-  std::lock_guard<mutex> lock(this->mtx);
-  for (auto &follower : this->followers) {
-    if (!follower->isAlive) {
-      continue;
-    }
+  std::lock_guard<mutex> listLock(this->mtx);
 
-    if (!send_all(follower->followerSocket, message)) {
-      follower->isAlive = false;
-      log_line(LogLevel::WARN, "Broadcast failed to follower");
+  for (auto &follower : this->followers) {
+    if (follower->isAlive) {
+      std::lock_guard<mutex> ioLock(follower->connectionMutex);
+
+      if (!send_all(follower->followerSocket, message)) {
+        follower->isAlive = false;
+        log_line(LogLevel::WARN, "Broadcast failed to follower");
+    }
     }
   }
 }
@@ -209,6 +217,17 @@ size_t Leader::CountAcks(uint64_t lsn) {
   }
 
   return ackCount;
+}
+
+void Leader::WaitForAcks(uint64_t lsn) {
+  if (this->requiredAcks <= 0) {
+    return;
+  }
+
+  std::unique_lock<mutex> lock(this->mtx);
+  this->conditionVariable.wait_for(lock, std::chrono::seconds(3), [&]{
+      return this->CountAcks(lsn) >= static_cast<size_t>(this->requiredAcks);
+  });
 }
 
 // Klausosi klientų (SET/GET/DEL) nurodytame porte ir tvarko jų užklausas.
@@ -229,13 +248,80 @@ void Leader::ServeClients() {
   log_line(LogLevel::INFO, "Leader: listening clients on " + std::to_string(this->clientPort));
 
   while (this->running) {
-    sock_t clientSocket = tcp_accept(listenSocket);
+    sock_t clientSocket = tcp_accept(this->clientListenSocket);
     if (clientSocket == NET_INVALID) {
       continue;
     }
 
     // Kiekvienam klientui – atskiras handler'is threade.
     thread(&Leader::HandleClient, this, clientSocket).detach();
+  }
+}
+
+void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
+  WalRecord walRecord(0, WalOperation::SET, tokens[1], tokens[2]);
+
+  auto newLsn = this->duombaze->ExecuteLogSetWithLSN(walRecord.key, walRecord.value);
+
+  if (newLsn > 0) {
+    walRecord.lsn = newLsn;
+
+    this->BroadcastWalRecord(walRecord);
+    this->WaitForAcks(newLsn);
+
+    send_all(clientSocket, "OK " + std::to_string(newLsn) + "\n");
+  } else {
+    send_all(clientSocket, "ERR_WRITE_FAILED\n");
+  }
+}
+
+void Leader::HandleDel(sock_t clientSocket, const vector<string> &tokens) {
+  WalRecord walRecord(0, WalOperation::DELETE, tokens[1]);
+
+  auto newLsn = this->duombaze->ExecuteLogDeleteWithLSN(walRecord.key);
+
+  if (newLsn > 0) {
+    walRecord.lsn = newLsn;
+
+    this->BroadcastWalRecord(walRecord);
+    this->WaitForAcks(newLsn);
+
+    send_all(clientSocket, "OK " + std::to_string(newLsn) + "\n");
+  } else {
+    send_all(clientSocket, "ERR_WRITE_FAILED\n");
+  }
+}
+
+void Leader::HandleGet(sock_t clientSocket, const string &key) {
+  auto result = this->duombaze->Get(key);
+  string message = result.has_value() ? "VALUE " + result->value + "\n" : "NOT_FOUND\n";
+  send_all(clientSocket, message);
+}
+
+void Leader::HandleRangeQuery(sock_t clientSocket, const vector<string> &tokens, bool forward) {
+  try {
+    auto startKey = string(tokens[1]);
+    auto count = std::stoul(tokens[2]);
+
+    auto results = forward
+      ? this->duombaze->GetFF(startKey, count)
+      : this->duombaze->GetFB(startKey, count);
+
+    for (const auto &cell : results) {
+      send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + cell.value + "\n");
+    }
+    send_all(clientSocket, "END\n");
+  } catch (const std::exception& e) {
+      send_all(clientSocket, "ERR " + std::string(e.what()) + "\n");
+  }
+}
+
+void Leader::HandleOptimize(sock_t clientSocket) {
+  try {
+    this->duombaze->Optimize();
+    send_all(clientSocket, "OK_OPTIMIZED\n");
+  } catch(const std::exception& e) {
+      send_all(clientSocket, "ERR " + string(e.what()) + "\n");
   }
 }
 
@@ -251,92 +337,23 @@ void Leader::HandleClient(sock_t clientSocket) {
       string &command = tokens[0];
 
       if (command == "SET" && tokens.size() >= 3) {
-        uint64_t newLsn = 0;
-        WalRecord walRecord(0, WalOperation::SET, tokens[1], tokens[2]);
-
-        newLsn = this->duombaze->ExecuteLogSetWithLSN(walRecord.key, walRecord.value);
-
-        if (newLsn > 0) {
-          walRecord.lsn = newLsn;
-          this->BroadcastWalRecord(walRecord);
-
-          if (this->requiredAcks > 0) {
-            std::unique_lock<mutex> lock(this->mtx);
-            this->conditionVariable.wait_for(lock, std::chrono::seconds(3), [&]{
-              return this->CountAcks(newLsn) >= static_cast<size_t>(this->requiredAcks);
-            });
-          }
-          send_all(clientSocket, "OK " + std::to_string(newLsn) + "\n");
-        } else {
-          send_all(clientSocket, "ERR_WRITE_FAILED\n");
-        }
+        this->HandleSet(clientSocket, tokens);
       } else if (command == "DEL" && tokens.size() == 2) {
-        uint64_t newLsn = 0;
-        WalRecord walRecord(0, WalOperation::DELETE, tokens[1]);
-
-        newLsn = this->duombaze->ExecuteLogDeleteWithLSN(walRecord.key);
-
-        if (newLsn > 0) {
-          walRecord.lsn = newLsn;
-          this->BroadcastWalRecord(walRecord);
-
-          if (this->requiredAcks > 0) {
-            std::unique_lock<mutex> lock(this->mtx);
-            this->conditionVariable.wait_for(lock, std::chrono::seconds(3), [&]{
-              return this->CountAcks(newLsn) >= static_cast<size_t>(this->requiredAcks);
-            });
-          }
-          send_all(clientSocket, "OK " + std::to_string(newLsn) + "\n");
-        } else {
-          send_all(clientSocket, "ERR_WRITE_FAILED\n");
-        }
+        this->HandleDel(clientSocket, tokens);
       } else if (command == "GET" && tokens.size() >= 2) {
-        auto result = this->duombaze->Get(tokens[1]);
-        if (!result.has_value()) {
-          send_all(clientSocket, "NOT_FOUND\n");
-        }
-        else {
-          send_all(clientSocket, "VALUE " + result->value + "\n");
-        }
+        this->HandleGet(clientSocket, tokens[1]);
       } else if (command == "GETFF" && tokens.size() >= 3) {
-        try {
-          auto startKey = string(tokens[1]);
-          uint32_t count = std::stoul(tokens[2]);
-          auto results = this->duombaze->GetFF(startKey, count);
-
-          for (const auto &cell : results) {
-            send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + cell.value + "\n");
-          }
-          send_all(clientSocket, "END\n");
-        } catch (const std::exception& e) {
-            send_all(clientSocket, "ERR " + std::string(e.what()) + "\n");
-        }
+        this->HandleRangeQuery(clientSocket, tokens, true);
       } else if (command == "GETFB" && tokens.size() >= 3) {
-        try {
-          auto startKey = string(tokens[1]);
-          uint32_t count = std::stoul(tokens[2]);
-          auto results = this->duombaze->GetFB(startKey, count);
-
-          for (const auto &cell : results) {
-            send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + cell.value + "\n");
-          }
-          send_all(clientSocket, "END\n");
-        } catch (const std::exception& e) {
-            send_all(clientSocket, "ERR " + std::string(e.what()) + "\n");
-        }
+        this->HandleRangeQuery(clientSocket, tokens, false);
       } else if (command == "OPTIMIZE") {
-        try {
-          this->duombaze->Optimize();
-          send_all(clientSocket, "OK_OPTIMIZED\n");
-        } catch(const std::exception& e) {
-            send_all(clientSocket, "ERR " + std::string(e.what()) + "\n");
-        }
+        this->HandleOptimize(clientSocket);
       } else {
         send_all(clientSocket, "ERR usage: SET|GET|DEL|GETFF|GETFB|OPTIMIZE\n");
       }
     }
   } catch (const std::exception& ex) {
-    log_line(LogLevel::ERROR, std::string("Exception in client handler: ") + ex.what());
+    log_line(LogLevel::ERROR, string("Exception in client handler: ") + ex.what());
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown exception in client handler");
   }
@@ -353,32 +370,22 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    int client_port_i   = std::stoi(argv[1]);
-    int follower_port_i = std::stoi(argv[2]);
-    if (client_port_i <= 0 || client_port_i > Consts::MAX_PORT_NUMBER ||
-        follower_port_i <= 0 || follower_port_i > Consts::MAX_PORT_NUMBER) {
-      std::cerr << "Invalid ports\n";
-      return 1;
-    }
-
-    auto client_port = static_cast<uint16_t>(client_port_i);
-    auto follower_port = static_cast<uint16_t>(follower_port_i);
+    auto clientPort = std::stoi(argv[1]);
+    auto followerPort = std::stoi(argv[2]);
     string dbName = argv[3];
-
     auto requiredAcks = std::stoi(argv[4]);
-    requiredAcks = std::max(requiredAcks, 0);
 
     // host'as – optional 5-as argumentas, kad galėtum atspausdinti IP arba hostname'e
-    string leader_host = (argc >= 6) ? string(argv[5]) : string("unknown-host");
+    string host = (argc >= 6) ? string(argv[5]) : string("unknown-host");
 
     // Sukuriam Leader instance ir runninam.
-    Leader leader(dbName, client_port, follower_port, requiredAcks, leader_host);
+    Leader leader(dbName, clientPort, followerPort, requiredAcks, host);
 
     leader.Run();
 
     return 0;
   } catch (const std::exception& ex) {
-    log_line(LogLevel::ERROR, std::string("Fatal exception in leader main: ") + ex.what());
+    log_line(LogLevel::ERROR, string("Fatal exception in leader main: ") + ex.what());
     return 1;
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown fatal exception in leader main");
