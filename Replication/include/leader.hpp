@@ -66,7 +66,7 @@ private:
     size_t CountAcks(uint64_t lsn);
 
 public:
-    Leader(const string &dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, const string &host);
+    Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, string host);
     ~Leader();
 
     // Main loop: starts threads and blocks.

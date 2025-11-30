@@ -7,8 +7,8 @@
 #include <string>
 #include <thread>
 
-Leader::Leader(const string &dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, const string &host)
-    :dbName(dbName), clientPort(clientPort), followerPort(followerPort), requiredAcks(requiredAcks), host(host) {
+Leader::Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, string host)
+    :dbName(std::move(dbName)), clientPort(clientPort), followerPort(followerPort), requiredAcks(requiredAcks), host(std::move(host)) {
 
       log_line(LogLevel::INFO, "[Leader] Starting on " + this->host +
              " ClientPort:" + std::to_string(this->clientPort) +
