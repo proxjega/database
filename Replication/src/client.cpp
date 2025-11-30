@@ -10,8 +10,8 @@
 // GETFB  – Atgal einanti range užklausa (n raktų baigiant key)
 // leader – Atspausdina visus CLUSTER IP ir pažymi, kuris yra LEADER
 
-#include "common.hpp"
-#include "rules.cpp"   // kad matytume CLUSTER, CLIENT_PORT, FOLLOWER_READ_PORT
+#include "../include/common.hpp"
+#include "../include/rules.hpp"   // kad matytume CLUSTER, CLIENT_PORT, FOLLOWER_READ_PORT
 #include <iostream>
 #include <string>
 

@@ -1,14 +1,20 @@
-#include "common.hpp"
+#pragma once
+
 #include <cstdint>
+#include <string>
+#include <mutex>
+#include <atomic>
+#include <iostream>
 
 // Statinė informacija apie vieną klasterio mazgą.
 struct NodeInfo {
-    int         id;     // loginis mazgo ID (1..N)
+    int     id;     // loginis mazgo ID (1..N)
     std::string host;   // IP arba DNS vardas
     uint16_t    port;   // valdymo (election/heartbeat) prievadas
 };
 
 // Fiksuotas klasterio narių sąrašas.
+// Use 'static' to allow inclusion in multiple translation units.
 static NodeInfo CLUSTER[] = {
     {1, "127.0.0.1", 8001},  // node1
     {2, "127.0.0.2",  8002},  // node2
