@@ -300,8 +300,9 @@ void Leader::HandleClient(sock_t clientSocket) {
         }
       } else if (command == "GETFF" && tokens.size() >= 3) {
         try {
-          uint32_t pageNumber = std::stoul(tokens[2]);
-          auto results = this->duombaze->GetFF(tokens[1], pageNumber);
+          auto startKey = string(tokens[1]);
+          uint32_t count = std::stoul(tokens[2]);
+          auto results = this->duombaze->GetFF(startKey, count);
 
           for (const auto &cell : results) {
             send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + cell.value + "\n");
@@ -312,8 +313,9 @@ void Leader::HandleClient(sock_t clientSocket) {
         }
       } else if (command == "GETFB" && tokens.size() >= 3) {
         try {
-          uint32_t pageNumber = std::stoul(tokens[2]);
-          auto results = this->duombaze->GetFF(tokens[1], pageNumber);
+          auto startKey = string(tokens[1]);
+          uint32_t count = std::stoul(tokens[2]);
+          auto results = this->duombaze->GetFB(startKey, count);
 
           for (const auto &cell : results) {
             send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + cell.value + "\n");
