@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include "../include/logger.hpp"
+#include "../../Replication/include/common.hpp"
 
 using std::ios;
 using std::ifstream;
@@ -231,7 +232,7 @@ bool WAL::WriteRecordToStream(const WalRecord& record) {
 
     this->walFile << record.lsn << "|";
     if (record.operation == WalOperation::SET) {
-        this->walFile << "SET|" << record.key << "|" << EscapeValue(record.value) << "\n";
+        this->walFile << "SET|" << record.key << "|" << format_length_prefixed_value(EscapeValue(record.value)) << "\n";
     } else {
         this->walFile << "DELETE|" << record.key << "\n";
     }
