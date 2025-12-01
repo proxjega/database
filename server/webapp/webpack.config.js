@@ -6,7 +6,7 @@ module.exports = {
   entry: './src/main.js',
   output: {
     path: path.resolve(__dirname, '../public'),
-    filename: 'js/app.[contenthash].js',
+    filename: 'js/app.js',
     publicPath: '/',
     clean: true
   },
