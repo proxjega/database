@@ -72,7 +72,8 @@ private:
     uint64_t GetWalSequenceNumber() const { return wal.GetCurrentSequenceNumber(); }
 
     vector<WalRecord> ReadEntireWal() { return wal.ReadAll(); }
-    vector<WalRecord> GetWalRecordsSince(uint64_t lsn) { return wal.ReadFrom(lsn); }
+    vector<WalRecord> GetWalRecordsSince(uint64_t lastKnownLsn);
+    void ResetLogState();
 
     // For Debug
     void CoutDatabase() const;

@@ -17,7 +17,7 @@
 #include <cerrno>
 #include <algorithm>
 #include <iomanip>
-#include "../btree/include/logger.hpp"
+#include "../../btree/include/logger.hpp"
 
 // ---------- Logging ----------
 

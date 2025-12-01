@@ -2,7 +2,7 @@
 #include <lithium_http_server.hh>
 #include "symbols.hh"
 #include "db_client.hpp"
-#include "../../Replication/common.hpp"
+#include "../../Replication/include/common.hpp"
 #include <string>
 #include <optional>
 #include <memory>

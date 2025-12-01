@@ -10,8 +10,8 @@
 // GETFB  – Atgal einanti range užklausa (n raktų baigiant key)
 // leader – Atspausdina visus CLUSTER IP ir pažymi, kuris yra LEADER
 
-#include "common.hpp"
-#include "rules.cpp"   // kad matytume CLUSTER, CLIENT_PORT, FOLLOWER_READ_PORT
+#include "../include/common.hpp"
+#include "../include/rules.hpp"   // kad matytume CLUSTER, CLIENT_PORT, FOLLOWER_READ_PORT
 #include <iostream>
 #include <string>
 
@@ -326,6 +326,21 @@ int main(int argc, char** argv) {
       if (line == "END") break;
       std::cout << line << "\n";
     }
+
+    if (command == "COMPACT") {
+      sock_t sock = tcp_connect(leaderHost, leaderPort);
+      if (sock == NET_INVALID) {
+        return 1;
+      }
+
+      send_all(sock, "COMPACT\n");
+
+      std::string response;
+      if (recv_line(sock, response)) {
+        std::cout << response << "\n";
+      }
+    }
+
     net_close(s);
     return 0;
   }
