@@ -40,6 +40,8 @@ private:
     bool ApplyDeleteRecord(const vector<string> &tokens, uint64_t &currentLsn);
     bool ProccessCommandLine(const string &line, uint64_t &myLsn, bool &receivedUpdate);
 
+    bool ParseWriteCommand(const string &line, uint64_t &lsnOut, string &keyOut, string &valOut);
+
     // Susije su klientu.
     void ServeReadOnly(); // Veikia main thread'e.
     void HandleClient(sock_t clientSocket);
