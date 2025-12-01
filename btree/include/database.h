@@ -73,6 +73,7 @@ private:
 
     vector<WalRecord> ReadEntireWal() { return wal.ReadAll(); }
     vector<WalRecord> GetWalRecordsSince(uint64_t lastKnownLsn);
+    void ResetLogState();
 
     // For Debug
     void CoutDatabase() const;

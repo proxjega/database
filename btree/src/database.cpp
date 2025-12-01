@@ -1317,6 +1317,22 @@ vector<WalRecord> Database::GetWalRecordsSince(uint64_t lastKnownLsn) {
     return newRecords;
 }
 
+
+/**
+ @brief Išvalo visus WAL failus ir resetinna MetaPageHeader'į.
+*/
+void Database::ResetLogState() {
+    // 1. Išvalom visus WAL failus.
+    if (!this->wal.ClearAll()) {
+        std::cerr << "CRITICAL: Failed to clear WAL during reset!\n";
+    }
+
+    // 2. Nustatom MetaPageHeader'io LSN į 0.
+    this->writeLSN(0);
+
+    cout << "[Database] Log state reset. LSN is now 0.\n";
+}
+
 /**
  * @brief Gets LSN from Meta page
  *

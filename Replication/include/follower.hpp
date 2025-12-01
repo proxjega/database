@@ -47,6 +47,9 @@ private:
     void HandleRangeQuery(sock_t sock, const vector<string> &tokens, bool forward);
     void HandleRedirect(sock_t sock);
 
+    // Reset'inimas.
+    bool ApplyResetWAL(uint64_t &localLSN);
+
 public:
     Follower(string leaderHost, uint16_t leaderPort, string dbName, uint16_t readPort);
     ~Follower();

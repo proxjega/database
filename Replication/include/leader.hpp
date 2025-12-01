@@ -42,6 +42,7 @@ private:
     unique_ptr<Database> duombaze;
     vector<shared_ptr<FollowerConnection>> followers;
     bool running{true};
+    atomic<bool> maintenanceMode{false}; // "Stabdome pasaulį" flag'as.
 
     // Synchronization
     mutex mtx;
@@ -51,6 +52,7 @@ private:
     thread announceThread;
     thread followerAcceptThread;
     thread clientAcceptThread;
+    thread compactionThread;
 
     // We store listening sockets to close them in destructor (waking up accept threads)
     atomic<sock_t> clientListenSocket{NET_INVALID};
@@ -74,6 +76,13 @@ private:
     void BroadcastWalRecord(const WalRecord &walRecord);
     size_t CountAcks(uint64_t lsn);
     void WaitForAcks(uint64_t lsn);
+
+    // "Stabdome pasaulį" logika.
+    void AutoCompactLoop();
+    bool IsClusterHealthy();
+    void HandleCompact(sock_t clientSocket);
+    bool PerformCompaction(string &statusMsg);
+    void BroadcastReset();
 
 public:
     Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, string host);
