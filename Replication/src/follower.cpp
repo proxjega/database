@@ -1,12 +1,13 @@
 #include "../include/follower.hpp"
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <chrono>
 #include <string>
 #include <sys/types.h>
 
-static constexpr int MAX_FAILURES_BEFORE_RESET = 5;
+static constexpr int MAX_FAILURES_BEFORE_EXIT = 5;
 static constexpr int BASE_BACKOFF_MS = 1000;
 static constexpr int MAX_BACKOFF_MS = 30000;
 
@@ -51,21 +52,21 @@ Follower::~Follower() {
     }
 
     // 3. Join the background thread
-    if (this->leaderSyncThread.joinable()) {
-        this->leaderSyncThread.join();
+    if (this->readOnlyThread.joinable()) {
+        this->readOnlyThread.join();
     }
 }
 
 void Follower::Run() {
     // 1. Pradedame sinchronizacija su lyderiu background'e.
-    this->leaderSyncThread = thread(&Follower::SyncWithLeader, this);
+    this->readOnlyThread= thread(&Follower::ServeReadOnly, this);
 
     // 2. Aktyvuojame Read-Only pagrindiniame thread'e.
-    this->ServeReadOnly();
+    this->SyncWithLeader();
 
     // 3. Prisijungiame prie backgroud thread'o, jei Read-Only (ServeReadOnly) nebeveikia.
-    if (this->leaderSyncThread.joinable()) {
-        this->leaderSyncThread.join();
+    if (this->readOnlyThread.joinable()) {
+        this->readOnlyThread.join();
     }
 }
 
@@ -76,24 +77,28 @@ void Follower::SyncWithLeader() {
     log_line(LogLevel::DEBUG, "LSN FROM META PAGE: " + std::to_string(lastAppliedLsn));
 
     while (this->running) {
-        if (failureCount >= MAX_FAILURES_BEFORE_RESET) {
-            log_line(LogLevel::WARN, "Max consecutive failures (" + std::to_string(failureCount) + 
-                     ") reached. Soft resetting connection logic...");
-
-            // Long sleep to avoid spamming the logs/network
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-
-            // Reset counters to "Restart" the attempt loop
-            failureCount = 0;
-            backoffMs = BASE_BACKOFF_MS;
-        }
-
         // 1. Bandome susiconnect'int su leader.
-        sock_t leaderSocket = this->TryConnect(failureCount, backoffMs);
+        sock_t leaderSocket = this->TryConnect();
+
         if (leaderSocket == NET_INVALID) {
+            failureCount++;
+            log_line(LogLevel::WARN,
+                "connect to leader failed, sleeping " + std::to_string(backoffMs) +
+                " ms before retry (failure_count=" + std::to_string(failureCount) + ")");
+
+            std::this_thread::sleep_for(std::chrono::seconds(backoffMs));
+            backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
             continue;
         }
 
+        if (failureCount >= MAX_FAILURES_BEFORE_EXIT) {
+            log_line(LogLevel::ERROR, "Too many failures talking to leader (HELLO), exiting");
+            std::exit(2);
+        }
+
+        // Užtikriname, kad nekabėsime, jei lyderis prapuls.
+        backoffMs = BASE_BACKOFF_MS;
+        set_socket_timeouts(leaderSocket, Consts::SOCKET_TIMEOUT_MS);
         this->currentLeaderSocket = leaderSocket;
 
         // 2. Handshake.
@@ -131,24 +136,10 @@ void Follower::SyncWithLeader() {
     }
 }
 
-sock_t Follower::TryConnect(int &failureCount, int &backoffMs) {
+sock_t Follower::TryConnect() {
     log_line(LogLevel::INFO, "trying to connect to leader " + this->leaderHost + ":" + std::to_string(this->leaderPort));
     sock_t leaderSocket = tcp_connect(this->leaderHost, this->leaderPort);
 
-    if (leaderSocket == NET_INVALID) {
-        failureCount++;
-
-        log_line(LogLevel::WARN,
-                    "connect to leader failed, sleeping " + std::to_string(backoffMs) +
-                    " ms before retry (failure_count=" + std::to_string(failureCount) + ")");
-
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
-        return NET_INVALID;
-    }
-
-    // Užtikriname, kad nekabėsime, jei lyderis prapuls.
-    set_socket_timeouts(leaderSocket, Consts::SOCKET_TIMEOUT_MS);
     log_line(LogLevel::INFO, "Connected to Leader at " + this->leaderHost + ":" + std::to_string(this->leaderPort));
     return leaderSocket;
 }
