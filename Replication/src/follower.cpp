@@ -179,7 +179,7 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &re
         bool success = false;
         string &command = tokens[0];
 
-        if (command == "WRITE" && tokens.size() >= 4) {
+        if (command == "WRITE" && tokens.size() >= 5) {
             success = this->ApplySetRecord(tokens, myLsn);
         } else if (command == "DELETE" && tokens.size() >= 3) {
             success = this->ApplyDeleteRecord(tokens, myLsn);
@@ -203,12 +203,25 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &re
 bool Follower::ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn) {
     uint64_t lsn = std::stoull(tokens[1]);
     if (lsn <= currentLsn) {
+        send_all(this->currentLeaderSocket, "ACK " + std::to_string(lsn) + "\n");
         return true;
     }
 
-    WalRecord walRecord(lsn, WalOperation::SET, tokens[2], tokens[3]);
+    auto key = string(tokens[2]);
+    string value;
 
-    this->duombaze->ApplyReplication(walRecord);
+    if (!parse_length_prefixed_value(tokens, 3, this->currentLeaderSocket, value)) {
+        FollowerLog(LogLevel::ERROR, "Failed to parse value in WRITE");
+        return false;
+    }
+
+    WalRecord walRecord(lsn, WalOperation::SET, key, value);
+
+    if (!this->duombaze->ApplyReplication(walRecord)) {
+        FollowerLog(LogLevel::ERROR, "Failed to apply replication for LSN " + std::to_string(lsn));
+        return false;
+    }
+
     currentLsn = lsn;
     return true;
 }
@@ -216,12 +229,19 @@ bool Follower::ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn
 bool Follower::ApplyDeleteRecord(const vector<string> &tokens, uint64_t &currentLsn) {
     uint64_t lsn = std::stoull(tokens[1]);
     if (lsn <= currentLsn) {
+        send_all(this->currentLeaderSocket, "ACK " + std::to_string(lsn) + "\n");
         return true;
     }
 
-    WalRecord walRecord(lsn, WalOperation::DELETE, tokens[2]);
+    auto key = string(tokens[2]);
 
-    this->duombaze->ApplyReplication(walRecord);
+    WalRecord walRecord(lsn, WalOperation::DELETE, key);
+
+    if (!this->duombaze->ApplyReplication(walRecord)) {
+        FollowerLog(LogLevel::ERROR, "Failed to apply replication for LSN " + std::to_string(lsn));
+        return false;
+    }
+
     currentLsn = lsn;
     return true;
 }
@@ -250,7 +270,7 @@ void Follower::ServeReadOnly() {
 
 void Follower::HandleGet(sock_t sock, const string &key) {
     auto result = this->duombaze->Get(key);
-    string message = result.has_value() ? "VALUE " + result->value + "\n" : "NOT_FOUND\n";
+    string message = result.has_value() ? "VALUE " + format_length_prefixed_value(result->value) + "\n" : "NOT_FOUND\n";
     send_all(sock, message);
 }
 
@@ -264,7 +284,7 @@ void Follower::HandleRangeQuery(sock_t sock, const vector<string> &tokens, bool 
             : this->duombaze->GetFB(startKey, count);
 
         for (const auto &cell : results) {
-            send_all(sock, "KEY_VALUE " + cell.key + " " + cell.value);
+            send_all(sock, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value));
         }
         send_all(sock, "END\n");
     } catch (const std::exception& e) {

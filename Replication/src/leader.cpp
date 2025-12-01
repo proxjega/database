@@ -138,7 +138,7 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
 
       for (const auto &walRecord : missingRecords) {
       string message = (walRecord.operation == WalOperation::SET)
-          ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n")
+          ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + format_length_prefixed_value(walRecord.value) + "\n")
           : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
 
         if (!send_all(follower->followerSocket, message)) {
@@ -184,7 +184,7 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
 // Naudojama tiek naujiems įrašams (SET/DEL), tiek paleidimo metu replay'inant logbuf.
 void Leader::BroadcastWalRecord(const WalRecord &walRecord) {
   string message = (walRecord.operation == WalOperation::SET)
-    ? "WRITE " + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + walRecord.value + "\n"
+    ? "WRITE " + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + format_length_prefixed_value(walRecord.value) + "\n"
     : "DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n";
 
   std::lock_guard<mutex> listLock(this->mtx);
@@ -229,9 +229,8 @@ void Leader::WaitForAcks(uint64_t lsn) {
 // Klausosi klientų (SET/GET/DEL) nurodytame porte ir tvarko jų užklausas.
 // Visi SET/DEL:
 //  - įrašomi į WAL failą
-//  - įrašomi į kv
-//  - pridedami į logbuf
-//  - išsiunčiami follower'iams (broadcast_walRecord)
+//  - įrašomi į B+ medį
+//  - išsiunčiami follower'iams (broadcastWalRecord)
 //  - jei REQUIRED_ACKS > 0, laukiama ACK'ų iš follower'ių
 void Leader::ServeClients() {
   sock_t listenSocket = tcp_listen(this->clientPort);
@@ -255,7 +254,15 @@ void Leader::ServeClients() {
 }
 
 void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
-  WalRecord walRecord(0, WalOperation::SET, tokens[1], tokens[2]);
+  auto key = string(tokens[1]);
+  string value;
+
+  if (!parse_length_prefixed_value(tokens, 2, clientSocket, value)) {
+    send_all(clientSocket, "ERR_INVALID_VALUE_FORMAT\n");
+    return;
+  }
+
+  WalRecord walRecord(0, WalOperation::SET, key, value);
 
   auto newLsn = this->duombaze->ExecuteLogSetWithLSN(walRecord.key, walRecord.value);
 
@@ -290,7 +297,7 @@ void Leader::HandleDel(sock_t clientSocket, const vector<string> &tokens) {
 
 void Leader::HandleGet(sock_t clientSocket, const string &key) {
   auto result = this->duombaze->Get(key);
-  string message = result.has_value() ? "VALUE " + result->value + "\n" : "NOT_FOUND\n";
+  string message = result.has_value() ? "VALUE " + format_length_prefixed_value(result->value) + "\n" : "NOT_FOUND\n";
   send_all(clientSocket, message);
 }
 
@@ -304,7 +311,7 @@ void Leader::HandleRangeQuery(sock_t clientSocket, const vector<string> &tokens,
       : this->duombaze->GetFB(startKey, count);
 
     for (const auto &cell : results) {
-      send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + cell.value + "\n");
+      send_all(clientSocket, "KEY_VALUE "+ cell.key + " " + format_length_prefixed_value(cell.value) + "\n");
     }
     send_all(clientSocket, "END\n");
   } catch (const std::exception& e) {
@@ -332,7 +339,7 @@ void Leader::HandleClient(sock_t clientSocket) {
 
       string &command = tokens[0];
 
-      if (command == "SET" && tokens.size() >= 3) {
+      if (command == "SET" && tokens.size() >= 4) {
         this->HandleSet(clientSocket, tokens);
       } else if (command == "DEL" && tokens.size() == 2) {
         this->HandleDel(clientSocket, tokens);
