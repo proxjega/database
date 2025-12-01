@@ -71,6 +71,16 @@ struct pagingResult {
     bool hasPreviousPage;
 };
 
+struct pagingResultKeysOnly {
+    vector<string> keys;
+    uint32_t currentPage;
+    uint32_t totalPages;
+    uint32_t totalItems;
+    bool hasNextPage;
+    bool hasPreviousPage;
+};
+
+
 
 /**
  * @brief Base Page class. Has data array and few basic set get methods
