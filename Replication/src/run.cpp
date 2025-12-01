@@ -1,5 +1,5 @@
-#include "common.hpp"
-#include "rules.cpp"
+#include "../include/common.hpp"
+#include "../include/rules.hpp"
 #include <chrono>
 #include <thread>
 #include <atomic>

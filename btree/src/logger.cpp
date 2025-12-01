@@ -4,11 +4,34 @@
 #include <iostream>
 #include <sstream>
 #include "../include/logger.hpp"
+#include "../../Replication/include/common.hpp"
 
 using std::ios;
 using std::ifstream;
 using std::getline;
 using std::istringstream;
+
+namespace {
+// Helper: Replace \n with a placeholder (e.g., \0) to keep WAL on one line
+string EscapeValue(string value) {
+    for (auto &character : value) {
+        if (character == '\n') {
+            character = '\0'; // Replace newline with null char (or use a placeholder like 0x1F)
+        }
+    }
+    return value;
+}
+
+// Helper: Restore \n from placeholder
+string UnescapeValue(string value) {
+    for (auto &character : value) {
+        if (character == '\0') {
+            character = '\n';
+        }
+    }
+    return value;
+}
+}
 
 WalRecord::WalRecord(uint64_t seqNum, WalOperation operation, string key, string value)
     : lsn(seqNum), operation(operation), key(std::move(key)), value(std::move(value)) {};
@@ -189,7 +212,7 @@ WalRecord WAL::ParseWalRecord(const string &line) {
     if (opStr == "SET") {
         record.operation = WalOperation::SET;
         if (getline(iss, value)) {
-            record.value = value;
+            record.value = UnescapeValue(value);
         } else {
             record.value = "";
         }
@@ -209,7 +232,7 @@ bool WAL::WriteRecordToStream(const WalRecord& record) {
 
     this->walFile << record.lsn << "|";
     if (record.operation == WalOperation::SET) {
-        this->walFile << "SET|" << record.key << "|" << record.value << "\n";
+        this->walFile << "SET|" << record.key << "|" << format_length_prefixed_value(EscapeValue(record.value)) << "\n";
     } else {
         this->walFile << "DELETE|" << record.key << "\n";
     }
@@ -244,7 +267,7 @@ bool WAL::LogSet(const string &key, const string &value) {
     auto startPos = this->walFile.tellp();
 
     // Log'iname ir iškarto flush'iname į WAL'ą (.log failą).
-    this->walFile << record.lsn << "|SET|" << record.key << "|" << record.value << "\n";
+    this->walFile << record.lsn << "|SET|" << record.key << "|" << EscapeValue(record.value) << "\n";
     this->walFile.flush();
 
     // Gauname dabartinę poziciją/vietą į kurią būtų rašoma. (Kitaip, vieta faile, kurioje buvo pabaigta rašyti).
