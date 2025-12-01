@@ -153,6 +153,12 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
       return;
     }
 
+    // Čia kažkodėl siuntinėja pastoviai su kiekvienu request'u "GET __verify__". Tai ignore
+    if (helloLine.rfind("GET", 0) == 0) {
+       follower->isAlive = false;
+       return;
+    }
+
     auto helloParts = split(helloLine, ' ');
     if (helloParts.size() != 2 || helloParts[0] != "HELLO") {
       log_line(LogLevel::WARN, "Follower sent bad HELLO: " + helloLine);
