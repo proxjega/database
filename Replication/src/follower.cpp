@@ -6,7 +6,7 @@
 #include <string>
 #include <sys/types.h>
 
-static constexpr int MAX_FAILURES_BEFORE_EXIT = 5;
+static constexpr int MAX_FAILURES_BEFORE_RESET = 5;
 static constexpr int BASE_BACKOFF_MS = 1000;
 static constexpr int MAX_BACKOFF_MS = 30000;
 
@@ -76,6 +76,18 @@ void Follower::SyncWithLeader() {
     log_line(LogLevel::DEBUG, "LSN FROM META PAGE: " + std::to_string(lastAppliedLsn));
 
     while (this->running) {
+        if (failureCount >= MAX_FAILURES_BEFORE_RESET) {
+            log_line(LogLevel::WARN, "Max consecutive failures (" + std::to_string(failureCount) + 
+                     ") reached. Soft resetting connection logic...");
+
+            // Long sleep to avoid spamming the logs/network
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+
+            // Reset counters to "Restart" the attempt loop
+            failureCount = 0;
+            backoffMs = BASE_BACKOFF_MS;
+        }
+
         // 1. Bandome susiconnect'int su leader.
         sock_t leaderSocket = this->TryConnect(failureCount, backoffMs);
         if (leaderSocket == NET_INVALID) {
@@ -113,12 +125,6 @@ void Follower::SyncWithLeader() {
             failureCount = 0;
         }
 
-        // 7. Patikriname ar ne per daug failureCount.
-        if (failureCount >= MAX_FAILURES_BEFORE_EXIT) {
-            this->SelfDestruct("Too many consecutive failures");
-            return;
-        }
-
         // 8. Šiek tiek pamiegame prieš reconnect bandymą.
         std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
         backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
@@ -135,11 +141,6 @@ sock_t Follower::TryConnect(int &failureCount, int &backoffMs) {
         log_line(LogLevel::WARN,
                     "connect to leader failed, sleeping " + std::to_string(backoffMs) +
                     " ms before retry (failure_count=" + std::to_string(failureCount) + ")");
-
-        if (failureCount >= MAX_FAILURES_BEFORE_EXIT) {
-            this->SelfDestruct("Too many connection failures");
-            return NET_INVALID;
-        }
 
         std::this_thread::sleep_for(std::chrono::seconds(1));
         backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
@@ -163,22 +164,11 @@ bool Follower::PerformHandshake(uint64_t &myLsn) {
     return true;
 }
 
-void Follower::SelfDestruct(const string &reason) {
-    log_line(LogLevel::ERROR, "too many failures to reach leader, exiting so supervisor can respawn me");
-
-    // "Suicide": stabdom visą procesą
-    this->running = false;
-    // Uždaryti read socketą, kad pagrindinis thread'as (ServeReadOnlyLoop) atsirakintų
-    if (this->readListenSocket != NET_INVALID) {
-        net_close(this->readListenSocket);
-    }
-}
-
 bool Follower::RunReplicationSession(uint64_t &myLsn) {
     bool receivedUpdate = false;
     string line;
 
-    while (this-> running && recv_line(this->currentLeaderSocket, line)) {
+    while (this->running && recv_line(this->currentLeaderSocket, line)) {
         if (!this->ProccessCommandLine(line, myLsn, receivedUpdate)) {
             log_line(LogLevel::ERROR, "Replication protocol error");
             return receivedUpdate;
