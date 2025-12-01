@@ -51,17 +51,6 @@ Database::Database(const string &name) : name(name), wal(name) {
         }
 
         cout << "Database created successfully: " << this->pathToDatabaseFile << "\n";
-    } else {
-        // Database file exists — check if WAL recovery is needed
-        if (this->wal.HasPendingRecords()) {
-            cout << "Recovering from WAL...\n";
-            if (!this->RecoverFromWal()) {
-                throw std::runtime_error("WAL recovery failed");
-            }
-            cout << "WAL recovery complete.\n";
-        } else {
-            cout << "No WAL recovery needed.\n";
-        }
     }
 }
 

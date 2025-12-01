@@ -115,7 +115,7 @@ void Follower::SyncWithLeader() {
         // 3. Susiconnect'inome – reset'inam backoff.
         backoffMs = BASE_BACKOFF_MS;
 
-        // 4. Atliekame replikacija.
+        // 4. Atliekame replikaciją.
         bool sessionUseful = this->RunReplicationSession(lastAppliedLsn);
 
         // 5. Disconnect.
