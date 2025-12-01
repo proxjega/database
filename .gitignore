@@ -1056,6 +1056,9 @@ app.*
 .gitignore
 btree/data/DataBaseSetTest.db
 
+# Vue.js build output (server/public/ contains compiled webapp)
+server/public/
+
 client
 follower
 leader
