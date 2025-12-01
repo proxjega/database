@@ -202,56 +202,6 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &re
     }
 }
 
-bool Follower::ParseWriteCommand(const string &line, uint64_t &lsnOut, string &keyOut, string &valOut) {
-    std::istringstream iss(line);
-    string cmd;
-    string lsnStr;
-    string lenStr;
-
-    // Read header: WRITE <lsn> <key> <len>
-    if (!(iss >> cmd >> lsnStr >> keyOut >> lenStr)) {
-        return false;
-    }
-
-    try {
-        lsnOut = std::stoull(lsnStr);
-        size_t valueLen = std::stoull(lenStr);
-
-        char space;
-        iss.get(space); // Consume the space after length
-
-        // Get what recv_line grabbed so far
-        string reconstructed;
-        std::getline(iss, reconstructed);
-
-        // If we have less than full length, it means recv_line cut off at a newline
-        if (reconstructed.length() < valueLen) {
-            reconstructed += "\n"; // Restore the eaten newline
-
-            size_t bytesNeeded = valueLen - reconstructed.length();
-            if (bytesNeeded > 0) {
-                vector<char> buffer(bytesNeeded);
-                size_t totalRead = 0;
-
-                // Read exact raw bytes for the rest
-                while (totalRead < bytesNeeded) {
-                    int received = recv(this->currentLeaderSocket, buffer.data() + totalRead, bytesNeeded - totalRead, 0);
-                    if (received <= 0) {
-                        return false;
-                    }
-                    totalRead += received;
-                }
-                reconstructed.append(buffer.data(), bytesNeeded);
-            }
-        }
-
-        valOut = reconstructed;
-        return valOut.length() == valueLen;
-    } catch (...) {
-        return false;
-    }
-}
-
 bool Follower::ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn) {
     uint64_t lsn = std::stoull(tokens[1]);
     if (lsn <= currentLsn) {
