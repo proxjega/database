@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <string>
 
 using std::string;
 using std::vector;

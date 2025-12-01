@@ -1,11 +1,6 @@
 #include "../include/leader.hpp"
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <mutex>
-#include <string>
-#include <thread>
 
 Leader::Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, string host)
     :dbName(std::move(dbName)), clientPort(clientPort), followerPort(followerPort), requiredAcks(requiredAcks), host(std::move(host)) {
@@ -45,10 +40,10 @@ Leader::~Leader() {
 
 void Leader::Run() {
   // 1. Paleidžiam periodinį "[Leader] host port" (Announce)
-  std::thread announceThread(&Leader::AnnouncePresence, this);
+  thread announceThread(&Leader::AnnouncePresence, this);
 
   // 2. Paleidžiam followerių priėmėją atskiram threade
-  this->followerAcceptThread = std::thread(&Leader::AcceptFollowers, this);
+  this->followerAcceptThread = thread(&Leader::AcceptFollowers, this);
 
   // 3. Pagrindinis thread'as aptarnauja klientus (SET/GET/DEL)
   // This function blocks until running_ becomes false or socket closes
