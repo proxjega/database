@@ -25,12 +25,13 @@ int main(){
             std::cerr << e.what() << endl;
         }
     }
-    cout << "LSN: " << DatabaseSetTest.getLSN() << endl;
-    DatabaseSetTest.writeLSN(54);
-    cout << "LSN: " << DatabaseSetTest.getLSN() << endl;
 
-    auto result2= DatabaseSetTest.GetFF("A", 10);
-    for (auto a: result2) {
-        cout << a.key << ":" << a.value << endl;
+    auto result1 = DatabaseSetTest.GetKeysPaging(20, 1);
+    auto result2 = DatabaseSetTest.GetKeysValuesPaging(20, 2);
+    for (auto a : result1.keys) {
+        cout << "Key: " << a << "\n";
+    }
+    for (auto a : result2.keyValuePairs) {
+        cout << "Key: " << a.key << "\n" << "value: " << a.value << "\n\n";
     }
 }

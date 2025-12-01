@@ -51,11 +51,12 @@ private:
     std::optional<leafNodeCell> Get(const string &key) const;
     bool Set(const string& key, const string &value);
     vector<string> GetKeys() const;
+    pagingResultKeysOnly GetKeysPaging(uint32_t pageSize, uint32_t pageNum) const;
+    vector<leafNodeCell> GetKeysValues() const;
+    pagingResult GetKeysValuesPaging(uint32_t pageSize, uint32_t pageNum) const;
     vector<string> GetKeys(const string &prefix) const;
     vector<leafNodeCell> GetFF(const string &key, uint32_t n) const;
-    pagingResult GetFF(uint32_t pageSize, uint32_t pageNum) const;
     vector<leafNodeCell> GetFB(const string &key, uint32_t n) const;
-    pagingResult GetFB(uint32_t pageSize, uint32_t pageNum) const;
     bool Remove(const string& key);
     void Optimize();
 
