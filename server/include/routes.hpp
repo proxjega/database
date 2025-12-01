@@ -26,6 +26,9 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
     sock_t s = tcp_connect(CLUSTER_NODES[node-1], follower_port);
 
     if (s != NET_INVALID) {
+      // Set timeout on follower socket too
+      set_socket_timeouts(s, 500);
+
       send_all(s, "SET __probe__ 1\n");  // Non-GET triggers REDIRECT
 
       std::string response;
@@ -39,8 +42,8 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
           // Verify the REDIRECT target is actually alive (with short timeout)
           sock_t verify_s = tcp_connect(redirect_host, redirect_port);
           if (verify_s != NET_INVALID) {
-            // Set aggressive 500ms timeout to quickly detect dead leaders
-            set_socket_timeouts(verify_s, 500);
+            // Set aggressive 300ms timeout to quickly detect dead leaders
+            set_socket_timeouts(verify_s, 300);
 
             // Send a test command to verify it responds
             send_all(verify_s, "GET __verify__\n");
@@ -416,6 +419,71 @@ inline auto make_routes() {
   api.get("/api/keys-test/{{key}}") = [](http_request& req, http_response& res) {
     auto params = req.url_parameters(s::key = std::string());
     res.write("Keys Test: " + params.key);
+  };
+
+  // GET /api/keys/prefix/{{prefix}} - Get keys with prefix
+  api.get("/api/keys/prefix/{{prefix}}") = [db_client](http_request& req, http_response& res) {
+    try {
+      auto params = req.url_parameters(s::prefix = std::string());
+      std::string prefix = params.prefix;
+
+      DbResponse response = db_client->getKeysPrefix(prefix);
+
+      if (!response.success) {
+        res.set_status(500);
+        res.write_json(s::error = response.error);
+        return;
+      }
+
+      // Build JSON array of keys
+      std::ostringstream json;
+      json << "{\"keys\":[";
+      for (size_t i = 0; i < response.keys.size(); i++) {
+        if (i > 0) json << ",";
+        json << "\"" << json_escape(response.keys[i]) << "\"";
+      }
+      json << "]}";
+
+      res.write(json.str());
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(s::error = e.what());
+    }
+  };
+
+  // GET /api/keys/paging - Get keys with pagination
+  api.get("/api/keys/paging") = [db_client](http_request& req, http_response& res) {
+    try {
+      auto query = req.get_parameters(s::pageSize = int(), s::pageNum = int());
+
+      if (query.pageSize <= 0 || query.pageNum <= 0) {
+        res.set_status(400);
+        res.write_json(s::error = "pageSize and pageNum must be positive integers");
+        return;
+      }
+
+      DbResponse response = db_client->getKeysPaging(query.pageSize, query.pageNum);
+
+      if (!response.success) {
+        res.set_status(500);
+        res.write_json(s::error = response.error);
+        return;
+      }
+
+      // Build JSON response with keys array and totalCount
+      std::ostringstream json;
+      json << "{\"keys\":[";
+      for (size_t i = 0; i < response.keys.size(); i++) {
+        if (i > 0) json << ",";
+        json << "\"" << json_escape(response.keys[i]) << "\"";
+      }
+      json << "],\"totalCount\":" << response.totalCount << "}";
+
+      res.write(json.str());
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(s::error = e.what());
+    }
   };
 
   // Static file serving for Vue.js SPA (MUST BE LAST - catch-all route)

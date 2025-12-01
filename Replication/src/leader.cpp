@@ -377,6 +377,50 @@ void Leader::HandleOptimize(sock_t clientSocket) {
   }
 }
 
+void Leader::HandleGetKeys(sock_t clientSocket, const vector<string>& tokens) {
+  try {
+    // GETKEYS [prefix]
+    // If no prefix provided (tokens.size() == 1), get all keys
+    // If prefix provided (tokens.size() >= 2), get keys with that prefix
+    string prefix = (tokens.size() >= 2) ? tokens[1] : "";
+
+    vector<string> keys;
+    if (prefix.empty()) {
+      keys = this->duombaze->GetKeys();
+    } else {
+      keys = this->duombaze->GetKeys(prefix);
+    }
+
+    for (const auto& key : keys) {
+      send_all(clientSocket, "KEY " + key + "\n");
+    }
+    send_all(clientSocket, "END\n");
+  } catch (const std::exception& e) {
+    send_all(clientSocket, "ERR " + string(e.what()) + "\n");
+  }
+}
+
+void Leader::HandleGetKeysPaging(sock_t clientSocket, const vector<string>& tokens) {
+  try {
+    // GETKEYSPAGING <pageSize> <pageNum>
+    auto pageSize = std::stoul(tokens[1]);
+    auto pageNum = std::stoul(tokens[2]);
+
+    auto result = this->duombaze->GetKeysPaging(pageSize, pageNum);
+
+    // Send total count first
+    send_all(clientSocket, "TOTAL " + std::to_string(result.totalItems) + "\n");
+
+    // Send each key
+    for (const auto& key : result.keys) {
+      send_all(clientSocket, "KEY " + key + "\n");
+    }
+    send_all(clientSocket, "END\n");
+  } catch (const std::exception& e) {
+    send_all(clientSocket, "ERR " + string(e.what()) + "\n");
+  }
+}
+
 void Leader::HandleCompact(sock_t clientSocket) {
   string msg;
   bool success = this->PerformCompaction(msg);
@@ -511,8 +555,12 @@ void Leader::HandleClient(sock_t clientSocket) {
         this->HandleOptimize(clientSocket);
       } else if (command == "COMPACT") {
         this->HandleCompact(clientSocket);
+      } else if (command == "GETKEYS" && tokens.size() >= 1) {
+        this->HandleGetKeys(clientSocket, tokens);
+      } else if (command == "GETKEYSPAGING" && tokens.size() == 3) {
+        this->HandleGetKeysPaging(clientSocket, tokens);
       } else {
-        send_all(clientSocket, "ERR usage: SET|GET|DEL|GETFF|GETFB|OPTIMIZE\n");
+        send_all(clientSocket, "ERR usage: SET|GET|DEL|GETFF|GETFB|GETKEYS|GETKEYSPAGING|OPTIMIZE\n");
       }
     }
   } catch (const std::exception& ex) {

@@ -88,6 +88,29 @@ class DatabaseAPI {
   }
 
   /**
+   * Get keys with prefix
+   * @param {string} prefix - Prefix to search for (empty string for all keys)
+   */
+  async getKeysPrefix(prefix = "") {
+    await this.discoverLeader();
+    const response = await axios.get(`${this.baseURL}/keys/prefix/${encodeURIComponent(prefix)}`);
+    return response.data;
+  }
+
+  /**
+   * Get keys with paging
+   * @param {number} pageSize - Number of keys per page
+   * @param {number} pageNum - Page number (1-indexed)
+   */
+  async getKeysPaging(pageSize, pageNum) {
+    await this.discoverLeader();
+    const response = await axios.get(
+      `${this.baseURL}/keys/paging?pageSize=${pageSize}&pageNum=${pageNum}`
+    );
+    return response.data;
+  }
+
+  /**
    * OPTIMIZE database
    */
   async optimize() {

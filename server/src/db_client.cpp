@@ -312,6 +312,76 @@ DbResponse DbClient::getfb(const std::string& key, uint32_t count) {
     return response;
 }
 
+DbResponse DbClient::getKeysPrefix(const std::string& prefix) {
+    DbResponse response;
+    sock_t s = tcp_connect(leader_host, leader_port);
+    if (s == NET_INVALID) {
+        response.success = false;
+        response.error = "Failed to connect to database leader";
+        return response;
+    }
+
+    // Send GETKEYS command with prefix (empty prefix gets all keys)
+    std::string command = "GETKEYS " + prefix + "\n";
+    send_all(s, command);
+
+    std::string line;
+    while (recv_line(s, line)) {
+        line = trim(line);
+        if (line == "END") {
+            response.success = true;
+            break;
+        }
+
+        auto tokens = split(line, ' ');
+        if (tokens.size() >= 2 && tokens[0] == "KEY") {
+            response.keys.push_back(tokens[1]);
+        } else if (tokens.size() >= 1 && tokens[0].substr(0, 3) == "ERR") {
+            response.error = line.substr(4);  // Skip "ERR "
+            break;
+        }
+    }
+
+    net_close(s);
+    return response;
+}
+
+DbResponse DbClient::getKeysPaging(uint32_t pageSize, uint32_t pageNum) {
+    DbResponse response;
+    sock_t s = tcp_connect(leader_host, leader_port);
+    if (s == NET_INVALID) {
+        response.success = false;
+        response.error = "Failed to connect to database leader";
+        return response;
+    }
+
+    // Send GETKEYSPAGING command
+    std::string command = "GETKEYSPAGING " + std::to_string(pageSize) + " " + std::to_string(pageNum) + "\n";
+    send_all(s, command);
+
+    std::string line;
+    while (recv_line(s, line)) {
+        line = trim(line);
+        if (line == "END") {
+            response.success = true;
+            break;
+        }
+
+        auto tokens = split(line, ' ');
+        if (tokens.size() >= 2 && tokens[0] == "KEY") {
+            response.keys.push_back(tokens[1]);
+        } else if (tokens.size() >= 2 && tokens[0] == "TOTAL") {
+            response.totalCount = std::stoul(tokens[1]);
+        } else if (tokens.size() >= 1 && tokens[0].substr(0, 3) == "ERR") {
+            response.error = line.substr(4);  // Skip "ERR "
+            break;
+        }
+    }
+
+    net_close(s);
+    return response;
+}
+
 DbResponse DbClient::optimize() {
     DbResponse response;
     sock_t s = tcp_connect(leader_host, leader_port);

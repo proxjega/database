@@ -13,6 +13,8 @@ struct DbResponse {
     std::string value;  // For single GET operations
     std::string error;  // Error message if success=false
     std::vector<std::pair<std::string, std::string>> results;  // For range queries
+    std::vector<std::string> keys;  // For key-only queries (prefix, paging)
+    uint32_t totalCount;  // For paging queries
 };
 
 /**
@@ -85,6 +87,21 @@ public:
      * @return DbResponse indicating success or error
      */
     DbResponse optimize();
+
+    /**
+     * Get keys with prefix
+     * @param prefix - Prefix to search for (empty string for all keys)
+     * @return DbResponse with keys vector
+     */
+    DbResponse getKeysPrefix(const std::string& prefix);
+
+    /**
+     * Get keys with paging
+     * @param pageSize - Number of keys per page
+     * @param pageNum - Page number (1-indexed)
+     * @return DbResponse with keys vector and totalCount
+     */
+    DbResponse getKeysPaging(uint32_t pageSize, uint32_t pageNum);
 
     /**
      * Get current leader host

@@ -151,6 +151,9 @@ export default {
       this.loading = true;
       this.error = null;
 
+      // Clear the leader discovery cache to force fresh lookup
+      api.leaderDiscoveryCache = null;
+
       try {
         // Fetch leader info and health in parallel
         const [leaderResponse, healthResponse] = await Promise.all([

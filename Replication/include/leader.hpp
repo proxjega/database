@@ -71,6 +71,8 @@ private:
     void HandleGet(sock_t clientSocket, const string &key);
     void HandleRangeQuery(sock_t clientSocket, const vector<string> &tokens, bool forward);
     void HandleOptimize(sock_t clientSocket);
+    void HandleGetKeys(sock_t clientSocket, const vector<string> &tokens);
+    void HandleGetKeysPaging(sock_t clientSocket, const vector<string> &tokens);
 
     // Logic
     void BroadcastWalRecord(const WalRecord &walRecord);

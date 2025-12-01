@@ -45,3 +45,18 @@
 #define LI_SYMBOL_name
     LI_SYMBOL(name)
 #endif
+
+#ifndef LI_SYMBOL_prefix
+#define LI_SYMBOL_prefix
+    LI_SYMBOL(prefix)
+#endif
+
+#ifndef LI_SYMBOL_pageSize
+#define LI_SYMBOL_pageSize
+    LI_SYMBOL(pageSize)
+#endif
+
+#ifndef LI_SYMBOL_pageNum
+#define LI_SYMBOL_pageNum
+    LI_SYMBOL(pageNum)
+#endif
