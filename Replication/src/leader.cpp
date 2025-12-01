@@ -41,6 +41,7 @@ Leader::~Leader() {
 void Leader::Run() {
   // 1. Paleidžiam periodinį "[Leader] host port" (Announce)
   thread announceThread(&Leader::AnnouncePresence, this);
+  announceThread.detach(); // // thread'as gyvena iki proceso pabaigos
 
   // 2. Paleidžiam followerių priėmėją atskiram threade
   this->followerAcceptThread = thread(&Leader::AcceptFollowers, this);
