@@ -326,6 +326,21 @@ int main(int argc, char** argv) {
       if (line == "END") break;
       std::cout << line << "\n";
     }
+
+    if (command == "COMPACT") {
+      sock_t sock = tcp_connect(leaderHost, leaderPort);
+      if (sock == NET_INVALID) {
+        return 1;
+      }
+
+      send_all(sock, "COMPACT\n");
+
+      std::string response;
+      if (recv_line(sock, response)) {
+        std::cout << response << "\n";
+      }
+    }
+
     net_close(s);
     return 0;
   }

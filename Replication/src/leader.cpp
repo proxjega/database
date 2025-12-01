@@ -1,6 +1,14 @@
 #include "../include/leader.hpp"
+#include "../include/rules.hpp"
 #include <chrono>
 #include <cstddef>
+
+namespace CONSTS {
+  static constexpr int TRIES_FOR_COMPACT = 50;
+  static constexpr int SLEEP_BEFORE_CHECKING_NODES = 100;
+
+  static constexpr int COMPACT_INTERVAL = 60;
+}
 
 Leader::Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int requiredAcks, string host)
     :dbName(std::move(dbName)), clientPort(clientPort), followerPort(followerPort), requiredAcks(requiredAcks), host(std::move(host)) {
@@ -29,6 +37,10 @@ Leader::~Leader() {
 
   this->conditionVariable.notify_all();
 
+  if (this->compactionThread.joinable()) {
+    this->compactionThread.join();
+  }
+
   if (this->followerAcceptThread.joinable()) {
     this->followerAcceptThread.join();
   }
@@ -43,16 +55,42 @@ void Leader::Run() {
   thread announceThread(&Leader::AnnouncePresence, this);
   announceThread.detach(); // // thread'as gyvena iki proceso pabaigos
 
-  // 2. Paleidžiam followerių priėmėją atskiram threade
+  // 2. Paleidžiam automatinio sinchronizavimo thread'ą.
+  this->compactionThread = thread(&Leader::AutoCompactLoop, this);
+
+  // 3. Paleidžiam followerių priėmėją atskiram threade
   this->followerAcceptThread = thread(&Leader::AcceptFollowers, this);
 
-  // 3. Pagrindinis thread'as aptarnauja klientus (SET/GET/DEL)
+  // 4. Pagrindinis thread'as aptarnauja klientus (SET/GET/DEL)
   // This function blocks until running_ becomes false or socket closes
   this->ServeClients();
 
-  // 4. Jei kada nors serveClients baigtųsi, palaukiam followerAcceptThread
+  // 5. Jei kada nors serveClients baigtųsi, palaukiam followerAcceptThread
   if (this->followerAcceptThread.joinable()) {
       this->followerAcceptThread.join();
+  }
+}
+
+void Leader::AutoCompactLoop() {
+  while (this->running) {
+    for (int i = 0; i < CONSTS::COMPACT_INTERVAL; ++i) {
+      if (!this->running) {
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    if (!this->running) {
+      return;
+    }
+
+    log_line(LogLevel::INFO, "[AutoCompact] Triggering scheduled compaction...");
+    string resultMsg;
+    auto success = this->PerformCompaction(resultMsg);
+
+    if (!success) {
+        log_line(LogLevel::WARN, "[AutoCompact] Failed: " + resultMsg);
+    }
   }
 }
 
@@ -129,6 +167,11 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
       log_line(LogLevel::WARN, "Bad lsn in follower HELLO: " + helloParts[1]);
       follower->isAlive = false;
       return;
+    }
+
+    {
+      std::lock_guard<mutex> stateLock(follower->connectionMutex);
+      follower->ackedUptoLsn = lastAppliedLsn;
     }
 
     // 2. Persiunčiam follower'iui visus įrašus nuo jo paskutinio turimo LSN.
@@ -328,6 +371,111 @@ void Leader::HandleOptimize(sock_t clientSocket) {
   }
 }
 
+void Leader::HandleCompact(sock_t clientSocket) {
+  string msg;
+  bool success = this->PerformCompaction(msg);
+
+  send_all(clientSocket, msg + "\n");
+}
+
+bool Leader::IsClusterHealthy() {
+  std::lock_guard<mutex> lock(this->mtx);
+
+  // 1. CLUSTER dydis iš rules.hpp.
+  int totalNodesInConfig = sizeof(CLUSTER) / sizeof(NodeInfo);
+
+  // 2. Reikalingi (Total - 1), nes lyderis nesiskaičiuoja.
+  int requiredFollowers = totalNodesInConfig - 1;
+
+  int activeFollowers = 0;
+  for (auto &follower : this->followers) {
+    if (follower->isAlive) {
+      activeFollowers++;
+    }
+  }
+
+  return activeFollowers >= requiredFollowers;
+}
+
+void Leader::BroadcastReset() {
+  log_line(LogLevel::INFO, "Broadcasting RESET_WAL to followers...");
+
+  std::lock_guard<mutex> listLock(this->mtx);
+
+  for (auto &follower: this->followers) {
+    if (follower->isAlive) {
+      std::lock_guard<mutex> ioLock(follower->connectionMutex);
+
+      // Siunčiame komandą.
+      if (!send_all(follower->followerSocket, "RESET_WAL\n")) {
+        log_line(LogLevel::WARN, "Failed to send RESET_WAL to a follower");
+        follower->isAlive = false;
+      }
+    }
+  }
+}
+
+bool Leader::PerformCompaction(string &statusMsg) {
+  log_line(LogLevel::INFO, "Attempting Compaction...");
+
+  // 1. Tikriname ar visos egzistuojančios replikacijos gyvos.
+  if (!this->IsClusterHealthy()) {
+    statusMsg = "ERR_CLUSTER_NOT_FULL_CANNOT_COMPACT";
+    log_line(LogLevel::WARN, "Compaction aborted: Cluster not full.");
+    return false;
+  }
+
+  // 2. Stabdome pasaulį.
+  this->maintenanceMode = true;
+  log_line(LogLevel::WARN, "--- STOP THE WORLD: MAINTENANCE STARTED ---");
+
+  // 3. Laukiame kol visi follower'iai susisinchronizuos pagal lyderio LSN.
+  auto currentLSN = this->duombaze->getLSN();
+  log_line(LogLevel::INFO, "Waiting for followers to catch up to LSN: " + std::to_string(currentLSN));
+
+  bool allSynced = false;
+  for (int i = 0; i < CONSTS::TRIES_FOR_COMPACT; i++) {
+    int syncedCount = 0;
+    {
+      std::lock_guard<mutex> lock(this->mtx);
+      for (auto &follower: this->followers) {
+        if (follower->isAlive && follower->ackedUptoLsn >= currentLSN) {
+          syncedCount++;
+        }
+      }
+    }
+
+    if (syncedCount >= ((sizeof(CLUSTER)/sizeof(NodeInfo)) - 1)) {
+      allSynced = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(CONSTS::SLEEP_BEFORE_CHECKING_NODES));
+  }
+
+  if (!allSynced) {
+    this->maintenanceMode = false;
+    statusMsg = "ERR_TIMEOUT_WAITING_FOR_SYNC";
+    log_line(LogLevel::ERROR, "Compaction failed: Timeout waiting for followers.");
+    return false;
+  }
+
+  // 4. Jeigu viskas OK, tai Broadcast'iname kiekvienam follower'iui, kad reset'intų WAL.
+  this->BroadcastReset();
+
+  // 5. Laukiame, kol visi follower'iai atsakys.
+  std::this_thread::sleep_for(std::chrono::seconds(2));
+
+  // 6. Pats (lyderis) reset'ina WAL.
+  log_line(LogLevel::INFO, "Resetting LEADER logs...");
+  this->duombaze->ResetLogState();
+
+  // 7. Pasaulis vėl sukasi.
+  this->maintenanceMode = false;
+  statusMsg = "OK_COMPACTED\n";
+  log_line(LogLevel::INFO, "--- COMPACTION SUCCESSFUL ---");
+  return true;
+}
+
 void Leader::HandleClient(sock_t clientSocket) {
   try {
     string requestLine;
@@ -338,6 +486,10 @@ void Leader::HandleClient(sock_t clientSocket) {
       }
 
       string &command = tokens[0];
+      if (this->maintenanceMode && command != "COMPACT") {
+        send_all(clientSocket, "ERR_MAINTENANCE_MODE_TRY_LATER\n");
+        continue;
+      }
 
       if (command == "SET" && tokens.size() >= 4) {
         this->HandleSet(clientSocket, tokens);
@@ -351,6 +503,8 @@ void Leader::HandleClient(sock_t clientSocket) {
         this->HandleRangeQuery(clientSocket, tokens, false);
       } else if (command == "OPTIMIZE") {
         this->HandleOptimize(clientSocket);
+      } else if (command == "COMPACT") {
+        this->HandleCompact(clientSocket);
       } else {
         send_all(clientSocket, "ERR usage: SET|GET|DEL|GETFF|GETFB|OPTIMIZE\n");
       }
@@ -363,6 +517,8 @@ void Leader::HandleClient(sock_t clientSocket) {
 
   net_close(clientSocket);
 }
+
+
 
 int main(int argc, char** argv) {
   try {

@@ -176,13 +176,15 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &re
     }
 
     try {
-        bool success = false;
         string &command = tokens[0];
+        bool success = false;
 
         if (command == "WRITE" && tokens.size() >= 5) {
             success = this->ApplySetRecord(tokens, myLsn);
         } else if (command == "DELETE" && tokens.size() >= 3) {
             success = this->ApplyDeleteRecord(tokens, myLsn);
+        } else if (command == "RESET_WAL") {
+            success = this->ApplyResetWAL(myLsn);
         }
 
         if (success) {
@@ -203,7 +205,6 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &re
 bool Follower::ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn) {
     uint64_t lsn = std::stoull(tokens[1]);
     if (lsn <= currentLsn) {
-        send_all(this->currentLeaderSocket, "ACK " + std::to_string(lsn) + "\n");
         return true;
     }
 
@@ -229,7 +230,6 @@ bool Follower::ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn
 bool Follower::ApplyDeleteRecord(const vector<string> &tokens, uint64_t &currentLsn) {
     uint64_t lsn = std::stoull(tokens[1]);
     if (lsn <= currentLsn) {
-        send_all(this->currentLeaderSocket, "ACK " + std::to_string(lsn) + "\n");
         return true;
     }
 
@@ -243,6 +243,18 @@ bool Follower::ApplyDeleteRecord(const vector<string> &tokens, uint64_t &current
     }
 
     currentLsn = lsn;
+    return true;
+}
+
+bool Follower::ApplyResetWAL(uint64_t &localLSN) {
+    FollowerLog(LogLevel::WARN, "Received RESET_WAL from Leader. Clearing logs...");
+
+    // 1. RESET!
+    this->duombaze->ResetLogState();
+
+    // 2. Reset'inam local LSN.
+    localLSN = this->duombaze->getLSN();
+
     return true;
 }
 
