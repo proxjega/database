@@ -32,7 +32,6 @@ private:
     // Susije su connect'ingu prie leader.
     void SyncWithLeader(); // Veikia background thread'e.
     sock_t TryConnect(int &failureCount, int &backoffMs);
-    void SelfDestruct(const string &reason);
     bool PerformHandshake(uint64_t &myLsn);
 
     // Replikacijos logika.
