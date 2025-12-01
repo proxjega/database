@@ -26,12 +26,12 @@ private:
 
     atomic<sock_t> readListenSocket{NET_INVALID};
     atomic<sock_t> currentLeaderSocket{NET_INVALID};
-    thread leaderSyncThread;
+    thread readOnlyThread;
 
 
     // Susije su connect'ingu prie leader.
     void SyncWithLeader(); // Veikia background thread'e.
-    sock_t TryConnect(int &failureCount, int &backoffMs);
+    sock_t TryConnect();
     bool PerformHandshake(uint64_t &myLsn);
 
     // Replikacijos logika.
