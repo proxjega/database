@@ -1347,6 +1347,7 @@ void Database::Optimize(){
 
     try {
         std::filesystem::remove(this->name + "Old.db");
+        std::filesystem::remove_all(OptimizedDb.wal.walDirectory);
     } catch (const std::filesystem::filesystem_error& e) {
         std::cerr << "Error deleting file: " << e.what() << '\n';
     }

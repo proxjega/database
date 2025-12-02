@@ -33,6 +33,7 @@ struct WalRecord {
  *
  */
 class WAL {
+    friend class Database;
 private:
     string name;
     fs::path walDirectory;
