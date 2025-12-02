@@ -10,7 +10,7 @@ NODE_ID=$1
 PHYSICAL_IPS=("207.180.251.206" "167.86.66.60" "167.86.83.198" "167.86.81.251")
 TAILSCALE_IPS=("100.117.80.126" "100.70.98.49" "100.118.80.33" "100.116.151.88")
 SSH_HOSTS=("cluster-node1" "cluster-node2" "cluster-node3" "cluster-node1")
-REPO_PATH="$HOME/database"
+REPO_PATH="database"  # Relative to remote user's home directory
 
 # Validate node ID
 if [ -z "$NODE_ID" ] || [ "$NODE_ID" -lt 1 ] || [ "$NODE_ID" -gt 4 ]; then
@@ -47,7 +47,7 @@ ssh_exec "cd $REPO_PATH/Replication && rm -rf data_node* *.log node*.out 2>/dev/
 
 # 3. Pull latest code
 echo "[3/7] Pulling latest code from git..."
-ssh_exec "cd $REPO_PATH && git pull origin main"
+ssh_exec "cd $REPO_PATH && git reset --hard HEAD && git pull origin main"
 if [ $? -ne 0 ]; then
     echo "ERROR: Git pull failed!"
     exit 1
