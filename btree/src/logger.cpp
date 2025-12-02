@@ -267,7 +267,7 @@ bool WAL::LogSet(const string &key, const string &value) {
     auto startPos = this->walFile.tellp();
 
     // Log'iname ir iškarto flush'iname į WAL'ą (.log failą).
-    this->walFile << record.lsn << "|SET|" << record.key << "|" << EscapeValue(record.value) << "\n";
+    this->walFile << record.lsn << "|SET|" << record.key << "|" << format_length_prefixed_value(EscapeValue(record.value)) << "\n";
     this->walFile.flush();
 
     // Gauname dabartinę poziciją/vietą į kurią būtų rašoma. (Kitaip, vieta faile, kurioje buvo pabaigta rašyti).
