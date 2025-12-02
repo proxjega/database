@@ -14,6 +14,15 @@ using std::atomic;
 using std::thread;
 using std::vector;
 
+enum class SessionStatus : uint8_t {
+    CLEAN_DISCONNECT,   // Viskas OK.
+    PROTOCOL_ERROR,     // Lyderis atsiuntė blogą infomrmaciją.
+};
+
+static constexpr int MAX_FAILURES_BEFORE_EXIT = 5;
+static constexpr int BASE_BACKOFF_MS = 1000;
+static constexpr int MAX_BACKOFF_MS = 30000;
+
 class Follower {
 private:
     string leaderHost;
@@ -35,10 +44,10 @@ private:
     bool PerformHandshake(uint64_t &myLsn);
 
     // Replikacijos logika.
-    bool RunReplicationSession(uint64_t &myLsn);
+    SessionStatus RunReplicationSession(uint64_t &myLsn);
     bool ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn);
     bool ApplyDeleteRecord(const vector<string> &tokens, uint64_t &currentLsn);
-    bool ProccessCommandLine(const string &line, uint64_t &myLsn, bool &receivedUpdate);
+    bool ProccessCommandLine(const string &line, uint64_t &myLsn);
 
     // Susije su klientu.
     void ServeReadOnly(); // Veikia main thread'e.

@@ -7,10 +7,6 @@
 #include <string>
 #include <sys/types.h>
 
-static constexpr int MAX_FAILURES_BEFORE_EXIT = 5;
-static constexpr int BASE_BACKOFF_MS = 1000;
-static constexpr int MAX_BACKOFF_MS = 30000;
-
 // Paprastas logger'is šitam faile – tik su "Follower" prefiksu, kad atskirt nuo kitų komponentų.
 namespace {
     void FollowerLog(LogLevel lvl, const string &msg) {
@@ -116,23 +112,23 @@ void Follower::SyncWithLeader() {
         backoffMs = BASE_BACKOFF_MS;
 
         // 4. Atliekame replikaciją.
-        bool sessionUseful = this->RunReplicationSession(lastAppliedLsn);
+        auto status = this->RunReplicationSession(lastAppliedLsn);
 
         // 5. Disconnect.
         net_close(this->currentLeaderSocket);
         this->currentLeaderSocket = NET_INVALID;
 
         // 6. Įvertiname replikacijos rezultatą.
-        if (!sessionUseful) {
+        if (status == SessionStatus::PROTOCOL_ERROR) {
+            log_line(LogLevel::ERROR, "Leader violated protocol! Incrementing failure count.");
             failureCount++;
-            log_line(LogLevel::WARN, "Disconnected without updates. Failures: " + std::to_string(failureCount));
-        } else {
+        } else if (status == SessionStatus::CLEAN_DISCONNECT) {
             failureCount = 0;
+            backoffMs = BASE_BACKOFF_MS;
         }
 
-        // 8. Šiek tiek pamiegame prieš reconnect bandymą.
+        // 7. Šiek tiek pamiegame prieš reconnect bandymą.
         std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
-        backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
     }
 }
 
@@ -155,21 +151,19 @@ bool Follower::PerformHandshake(uint64_t &myLsn) {
     return true;
 }
 
-bool Follower::RunReplicationSession(uint64_t &myLsn) {
-    bool receivedUpdate = false;
+SessionStatus Follower::RunReplicationSession(uint64_t &myLsn) {
     string line;
-
     while (this->running && recv_line(this->currentLeaderSocket, line)) {
-        if (!this->ProccessCommandLine(line, myLsn, receivedUpdate)) {
+        if (!this->ProccessCommandLine(line, myLsn)) {
             log_line(LogLevel::ERROR, "Replication protocol error");
-            return receivedUpdate;
+            return SessionStatus::PROTOCOL_ERROR;
         }
     }
 
-    return receivedUpdate;
+    return SessionStatus::CLEAN_DISCONNECT;
 }
 
-bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &receivedUpdate) {
+bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn) {
     auto tokens = split(trim(line), ' ');
     if (tokens.empty()) {
         return true;
@@ -189,7 +183,6 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn, bool &re
 
         if (success) {
             send_all(this->currentLeaderSocket, "ACK " + std::to_string(myLsn) + "\n");
-            receivedUpdate = true;
         }
 
         return true;
