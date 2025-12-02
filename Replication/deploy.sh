@@ -32,18 +32,23 @@ echo "Tailscale IP: $TAILSCALE_IP"
 echo "SSH Host:     $SSH_HOST"
 echo "========================================"
 
-# Helper function for SSH with password
+# Helper function for SSH (non-backgrounding; use for commands where you need status)
 ssh_exec() {
     ssh "$SSH_HOST" "$1"
 }
 
+# Helper function for SSH that disables tty and local stdin (use for fire-and-forget)
+ssh_exec_nontty() {
+    ssh -n -T "$SSH_HOST" "$1"
+}
+
 # 1. Stop existing processes
 echo "[1/7] Stopping existing cluster processes..."
-ssh_exec "killall -9 run leader follower 2>/dev/null; sleep 1" || true
+ssh_exec "killall -9 run leader follower 2>/dev/null || true; sleep 1" || true
 
 # 2. Clean old data
 echo "[2/7] Cleaning old data..."
-ssh_exec "cd $REPO_PATH/Replication && rm -rf data_node* *.log node*.out 2>/dev/null" || true
+ssh_exec "cd $REPO_PATH/Replication && rm -rf data_node* *.log node*.out node*.pid build.log 2>/dev/null" || true
 
 # 3. Pull latest code
 echo "[3/7] Pulling latest code from git..."
@@ -53,32 +58,47 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# 4. Build binaries
-echo "[4/7] Building cluster binaries..."
-ssh_exec "cd $REPO_PATH/Replication && make clean && make all 2>&1"
-if [ $? -ne 0 ]; then
-    echo "ERROR: Build failed!"
+# 4. Build binaries (suppress long compiler output into build.log)
+echo "[4/7] Building cluster binaries (compiler output written to build.log)..."
+# Run make and capture all output to build.log on the remote host
+ssh_exec "cd $REPO_PATH/Replication && make clean && make all > build.log 2>&1"
+BUILD_EXIT=$?
+if [ $BUILD_EXIT -ne 0 ]; then
+    echo "ERROR: Build failed — showing last 200 lines of remote build.log:"
+    ssh_exec "cd $REPO_PATH/Replication && tail -n 200 build.log"
     exit 1
+fi
+
+# Optionally detect warnings/errors and notify user (without printing full tail)
+# If you want to see the warnings, run: ssh $SSH_HOST 'tail -n 200 $REPO_PATH/Replication/build.log'
+HAS_ISSUES=$(ssh "$SSH_HOST" "grep -E -i 'warning:|error:' $REPO_PATH/Replication/build.log >/dev/null; echo \$?")
+if [ "$HAS_ISSUES" -eq 0 ]; then
+    echo "Build completed with warnings or errors present in build.log (warnings suppressed)."
+    echo "To inspect them: ssh $SSH_HOST 'tail -n 200 $REPO_PATH/Replication/build.log'"
+else
+    echo "Build successful."
 fi
 
 # 5. Verify build
 echo "[5/7] Verifying build..."
-ssh_exec "test -x $REPO_PATH/Replication/run && echo 'Build successful'"
+ssh_exec "test -x $REPO_PATH/Replication/run && echo 'Binary present' || (echo 'Binary missing' && exit 2)"
 if [ $? -ne 0 ]; then
     echo "ERROR: Binary not found or not executable!"
     exit 1
 fi
 
-# 6. Start node (in background with nohup)
+# 6. Start node (detached with setsid; record PID)
 echo "[6/7] Starting node $NODE_ID..."
-ssh_exec "cd $REPO_PATH/Replication && nohup ./run $NODE_ID > node${NODE_ID}.out 2>&1 &"
+# Use a non-interactive bash dance to detach reliably, write PID to nodeX.pid
+ssh_exec_nontty "cd $REPO_PATH/Replication && bash -lc 'setsid nohup ./run $NODE_ID > node${NODE_ID}.out 2>&1 < /dev/null & echo \$! > node${NODE_ID}.pid'"
 
-# 7. Quick verification (just check if process was spawned)
+# 7. Quick verification (check PID / process)
 echo "[7/7] Verifying node startup..."
 sleep 1
-echo "✓ Node $NODE_ID deployment command sent"
-echo "  Check logs with: ssh $SSH_HOST 'tail -f $REPO_PATH/Replication/node${NODE_ID}.out'"
+# Corrected if/else without syntax errors
+ssh_exec_nontty "cd $REPO_PATH/Replication && if [ -f node${NODE_ID}.pid ]; then printf 'Started: PID=' && cat node${NODE_ID}.pid; else pgrep -af run || echo 'No PID file and no process found'; fi"
 
+echo "  Check logs with: ssh $SSH_HOST 'tail -f $REPO_PATH/Replication/node${NODE_ID}.out'"
 echo "========================================"
 echo "Deployment complete for Node $NODE_ID"
 echo "========================================"
