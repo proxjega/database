@@ -128,15 +128,9 @@ void Leader::AcceptFollowers() {
       continue;
     }
 
-    auto followerConnection = std::make_shared<FollowerConnection>();
-    followerConnection->followerSocket = followerSocket;
-
-    {
-      std::lock_guard<mutex> lock(this->mtx);
-      this->followers.push_back(followerConnection);
-    }
-
-    thread(&Leader::HandleFollower, this, followerConnection).detach();
+    // Pass socket directly to HandleFollower - it will read HELLO first to get nodeId,
+    // then find/reuse or create a connection slot
+    thread(&Leader::HandleFollower, this, followerSocket).detach();
   }
 }
 
@@ -144,43 +138,93 @@ void Leader::AcceptFollowers() {
 // 1) Perskaito HELLO <last_lsn> iš follower'io;
 // 2) Nusiunčia jam trūkstamus WAL įrašus;
 // 3) Laukia iš jo ACK pranešimų.
-void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
+void Leader::HandleFollower(sock_t followerSocket) {
+  shared_ptr<FollowerConnection> follower = nullptr;
+
   try {
     // 1. HELLO iš follower'io.
     string helloLine;
-    if (!recv_line(follower->followerSocket, helloLine)) {
-      follower->isAlive = false;
+    if (!recv_line(followerSocket, helloLine)) {
+      net_close(followerSocket);
       return;
     }
 
     // Čia kažkodėl siuntinėja pastoviai su kiekvienu request'u "GET __verify__". Tai ignore
     if (helloLine.rfind("GET", 0) == 0) {
-       follower->isAlive = false;
+       net_close(followerSocket);
        return;
     }
 
     auto helloParts = split(helloLine, ' ');
-    if (helloParts.size() != 2 || helloParts[0] != "HELLO") {
+    // New format: HELLO <nodeId> <lastAppliedLsn>
+    // Old format: HELLO <lastAppliedLsn> (for backward compatibility)
+    if (helloParts.size() < 2 || helloParts.size() > 3 || helloParts[0] != "HELLO") {
       log_line(LogLevel::WARN, "Follower sent bad HELLO: " + helloLine);
-      follower->isAlive = false;
+      net_close(followerSocket);
       return;
     }
 
+    int nodeId = 0;
     uint64_t lastAppliedLsn = 0;
+
     try {
-      lastAppliedLsn = std::stoull(helloParts[1]);
+      if (helloParts.size() == 3) {
+        // New format: HELLO <nodeId> <lastAppliedLsn>
+        nodeId = std::stoi(helloParts[1]);
+        lastAppliedLsn = std::stoull(helloParts[2]);
+        log_line(LogLevel::INFO, "Follower HELLO: nodeId=" + std::to_string(nodeId) + " LSN=" + std::to_string(lastAppliedLsn));
+      } else {
+        // Old format: HELLO <lastAppliedLsn>
+        lastAppliedLsn = std::stoull(helloParts[1]);
+        log_line(LogLevel::INFO, "Follower HELLO (no nodeId): LSN=" + std::to_string(lastAppliedLsn));
+      }
     } catch (...) {
-      log_line(LogLevel::WARN, "Bad lsn in follower HELLO: " + helloParts[1]);
-      follower->isAlive = false;
+      log_line(LogLevel::WARN, "Bad format in follower HELLO: " + helloLine);
+      net_close(followerSocket);
       return;
     }
 
+    // 2. Find or create connection slot by nodeId
     {
-      std::lock_guard<mutex> stateLock(follower->connectionMutex);
-      follower->ackedUptoLsn = lastAppliedLsn;
+      std::lock_guard<mutex> lock(this->mtx);
+
+      // Search for existing slot with this nodeId
+      auto it = std::find_if(this->followers.begin(), this->followers.end(),
+        [nodeId](const auto& f) { return f->id == nodeId && nodeId != 0; });
+
+      if (it != this->followers.end()) {
+        // Found existing slot - reuse it
+        follower = *it;
+
+        if (follower->isAlive) {
+          // Duplicate connection! Close old socket and replace
+          log_line(LogLevel::WARN, "Node " + std::to_string(nodeId) +
+                   " connected while previous connection still alive - replacing");
+          if (follower->followerSocket != NET_INVALID) {
+            net_close(follower->followerSocket);
+          }
+        }
+
+        // Update socket and mark alive
+        follower->followerSocket = followerSocket;
+        follower->isAlive = true;
+        follower->ackedUptoLsn = lastAppliedLsn;
+        follower->lastSeenMs = now_ms();
+      } else {
+        // No existing slot - create new one
+        follower = std::make_shared<FollowerConnection>();
+        follower->id = nodeId;
+        follower->followerSocket = followerSocket;
+        follower->isAlive = true;
+        follower->ackedUptoLsn = lastAppliedLsn;
+        follower->lastSeenMs = now_ms();
+        this->followers.push_back(follower);
+
+        log_line(LogLevel::INFO, "New follower slot created for node " + std::to_string(nodeId));
+      }
     }
 
-    // 2. Persiunčiam follower'iui visus įrašus nuo jo paskutinio turimo LSN.
+    // 3. Persiunčiam follower'iui visus įrašus nuo jo paskutinio turimo LSN.
     auto missingRecords = this->duombaze->GetWalRecordsSince(lastAppliedLsn);
     {
       std::lock_guard<mutex> ioLock(follower->connectionMutex);
@@ -202,7 +246,7 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
       follower->ackedUptoLsn = missingRecords.back().lsn;
     }
 
-    // 3. Laukiam ACK.
+    // 4. Laukiam ACK.
     while (follower->isAlive && this->running) {
       string line;
       if (!recv_line(follower->followerSocket, line)) {
@@ -216,6 +260,7 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
         try {
           uint64_t ackLsn = std::stoull(tokens[1]);
           follower->ackedUptoLsn = std::max(follower->ackedUptoLsn, ackLsn);
+          follower->lastSeenMs = now_ms();  // Update last seen on each ACK
           this->conditionVariable.notify_all();
         } catch (...) {
           log_line(LogLevel::WARN, "Bad ACK lsn from follower: " + tokens[1]);
@@ -224,8 +269,10 @@ void Leader::HandleFollower(shared_ptr<FollowerConnection> follower) {
     }
   } catch (const std::exception& ex) {
     log_line(LogLevel::ERROR, string("Exception in follower_thread: ") + ex.what());
+    if (follower) follower->isAlive = false;
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown exception in follower_thread");
+    if (follower) follower->isAlive = false;
   }
 }
 
@@ -559,6 +606,29 @@ void Leader::HandleClient(sock_t clientSocket) {
         this->HandleGetKeys(clientSocket, tokens);
       } else if (command == "GETKEYSPAGING" && tokens.size() == 3) {
         this->HandleGetKeysPaging(clientSocket, tokens);
+      } else if (command == "INTERNAL_FOLLOWER_STATUS") {
+        // Internal command: return follower replication status for cluster health monitoring
+        std::ostringstream response;
+        std::lock_guard<mutex> lock(this->mtx);
+        uint64_t currentTime = now_ms();
+
+        for (auto& follower : this->followers) {
+          // Report followers that are alive OR were recently seen (within cache window)
+          // This handles the designed disconnect-reconnect cycle between sync sessions
+          bool recentlySeen = (currentTime - follower->lastSeenMs) < FOLLOWER_STATUS_CACHE_MS;
+
+          if (!follower->isAlive && !recentlySeen) continue;
+
+          // Report actual connection state, but show "recently seen" followers
+          string status = follower->isAlive ? "ALIVE" : "RECENT";
+
+          response << "FOLLOWER_STATUS "
+                   << follower->id << " "
+                   << status << " "
+                   << follower->ackedUptoLsn << "\n";
+        }
+        response << "END\n";
+        send_all(clientSocket, response.str());
       } else {
         send_all(clientSocket, "ERR usage: SET|GET|DEL|GETFF|GETFB|GETKEYS|GETKEYSPAGING|OPTIMIZE\n");
       }

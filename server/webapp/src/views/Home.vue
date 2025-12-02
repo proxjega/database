@@ -160,7 +160,7 @@
             <form @submit.prevent="handleGetKeysPaging">
               <div class="row">
                 <div class="col-md-4">
-                  <label class="form-label">Puslap io dydis</label>
+                  <label class="form-label">Puslapio dydis</label>
                   <input
                     v-model.number="pagingForm.pageSize"
                     type="number"
@@ -171,7 +171,7 @@
                   />
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">Puslap io numeris</label>
+                  <label class="form-label">Puslapio numeris</label>
                   <input
                     v-model.number="pagingForm.pageNum"
                     type="number"

@@ -29,6 +29,7 @@ private:
     uint16_t leaderPort;
     string dbName;
     uint16_t readPort;
+    int nodeId;  // This follower's node ID (1-4)
 
     std::unique_ptr<Database> duombaze;
     bool running{true};
@@ -60,7 +61,7 @@ private:
     bool ApplyResetWAL(uint64_t &localLSN);
 
 public:
-    Follower(string leaderHost, uint16_t leaderPort, string dbName, uint16_t readPort);
+    Follower(string leaderHost, uint16_t leaderPort, string dbName, uint16_t readPort, int nodeId = 0);
     ~Follower();
 
     void Run();

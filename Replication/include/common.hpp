@@ -52,7 +52,15 @@ namespace Consts {
     static constexpr int      MAX_PORT_NUMBER = 65535;
 }
 
-// Sugeneruoja dabartinį laiko „timestamp“ (HH:MM:SS.mmm) – naudojamas log’ams.
+// Returns current time in milliseconds since epoch (for timing/caching).
+static inline uint64_t now_ms() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count()
+    );
+}
+
+// Sugeneruoja dabartinį laiko „timestamp" (HH:MM:SS.mmm) – naudojamas log'ams.
 static inline std::string now_ts() {
     using namespace std::chrono;
     auto now = system_clock::now();

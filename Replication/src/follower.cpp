@@ -22,10 +22,11 @@ namespace {
     }
 }
 
-Follower::Follower(string leaderHost, uint16_t leaderPort, string dbName, uint16_t readPort)
-    : leaderHost(std::move(leaderHost)), leaderPort(leaderPort), dbName(std::move(dbName)), readPort(readPort) {
+Follower::Follower(string leaderHost, uint16_t leaderPort, string dbName, uint16_t readPort, int nodeId)
+    : leaderHost(std::move(leaderHost)), leaderPort(leaderPort), dbName(std::move(dbName)), readPort(readPort), nodeId(nodeId) {
 
-    log_line(LogLevel::INFO, "[Follower] Init. Leader: " + this->leaderHost +
+    log_line(LogLevel::INFO, "[Follower] Init. NodeID: " + std::to_string(this->nodeId) +
+            " Leader: " + this->leaderHost +
             ":" + std::to_string(this->leaderPort) +
              " DB: " + this->dbName + " ReadPort: " + std::to_string(this->readPort));
 
@@ -110,7 +111,8 @@ void Follower::SyncWithLeader() {
 
         // 3. Susiconnect'inome – reset'inam backoff.
         backoffMs = BASE_BACKOFF_MS;
-
+        failureCount = 0;
+        
         // 4. Atliekame replikaciją.
         auto status = this->RunReplicationSession(lastAppliedLsn);
 
@@ -141,13 +143,14 @@ sock_t Follower::TryConnect() {
 }
 
 bool Follower::PerformHandshake(uint64_t &myLsn) {
-    string helloMsg = "HELLO " + std::to_string(myLsn) + "\n";
+    // Format: HELLO <nodeId> <lastAppliedLsn>
+    string helloMsg = "HELLO " + std::to_string(this->nodeId) + " " + std::to_string(myLsn) + "\n";
     if (!send_all(this->currentLeaderSocket, helloMsg)) {
         log_line(LogLevel::WARN, "Failed to send HELLO");
         return false;
     }
 
-    log_line(LogLevel::INFO, "Sent HELLO " + std::to_string(myLsn));
+    log_line(LogLevel::INFO, "Sent HELLO nodeId=" + std::to_string(this->nodeId) + " LSN=" + std::to_string(myLsn));
     return true;
 }
 
@@ -354,8 +357,9 @@ int main(int argc, char** argv) {
         auto leaderPort = std::stoi(argv[2]);
         string dbName = argv[3];
         auto readPort = std::stoi(argv[5]);
+        int nodeId = (argc >= 7) ? std::stoi(argv[6]) : 0;  // Optional node ID
 
-        Follower follower(leaderHost, leaderPort, dbName, readPort);
+        Follower follower(leaderHost, leaderPort, dbName, readPort, nodeId);
         follower.Run();
     } catch (const std::exception& e) {
         std::cerr << "Fatal: " << e.what() << "\n";

@@ -4,7 +4,6 @@
 #include <iostream>
 #include <sstream>
 #include "../include/logger.hpp"
-#include "../../Replication/include/common.hpp"
 
 using std::ios;
 using std::ifstream;
@@ -232,7 +231,7 @@ bool WAL::WriteRecordToStream(const WalRecord& record) {
 
     this->walFile << record.lsn << "|";
     if (record.operation == WalOperation::SET) {
-        this->walFile << "SET|" << record.key << "|" << format_length_prefixed_value(EscapeValue(record.value)) << "\n";
+        this->walFile << "SET|" << record.key << "|" << EscapeValue(record.value) << "\n";
     } else {
         this->walFile << "DELETE|" << record.key << "\n";
     }
@@ -267,7 +266,7 @@ bool WAL::LogSet(const string &key, const string &value) {
     auto startPos = this->walFile.tellp();
 
     // Log'iname ir iškarto flush'iname į WAL'ą (.log failą).
-    this->walFile << record.lsn << "|SET|" << record.key << "|" << format_length_prefixed_value(EscapeValue(record.value)) << "\n";
+    this->walFile << record.lsn << "|SET|" << record.key << "|" << EscapeValue(record.value) << "\n";
     this->walFile.flush();
 
     // Gauname dabartinę poziciją/vietą į kurią būtų rašoma. (Kitaip, vieta faile, kurioje buvo pabaigta rašyti).

@@ -3,6 +3,7 @@
 #include "symbols.hh"
 #include "db_client.hpp"
 #include "../../Replication/include/common.hpp"
+#include "../../Replication/include/rules.hpp"
 #include <string>
 #include <optional>
 #include <memory>
@@ -10,8 +11,14 @@
 #include <vector>
 #include <fstream>
 #include <iomanip>
+#include <mutex>
 
 using namespace li;
+
+inline bool ends_with(const std::string& str, const std::string& suffix) {
+    if (suffix.size() > str.size()) return false;
+    return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
 
 // Helper function to discover current leader from cluster
 // Uses same logic as ./client leader command
@@ -335,90 +342,11 @@ inline auto make_routes() {
       res.write_json(s::error = std::string("Internal error: ") + e.what());
     }
   };
-
-  // Health check endpoint - returns current leader connection info
-  api.get("/api/health") = [db_client](http_request& req, http_response& res) {
-    try {
-      // Discover actual current leader (not static config)
-      std::string leader_host;
-      uint16_t leader_port = 7001;
-
-      if (discover_leader_from_cluster(leader_host, leader_port)) {
-        // Leader is active
-        std::ostringstream json;
-        json << "{"
-             << "\"status\":\"ok\","
-             << "\"leader_host\":\"" << leader_host << "\","
-             << "\"leader_port\":" << leader_port
-             << "}";
-
-        res.set_header("Content-Type", "application/json");
-        res.write(json.str());
-      } else {
-        // No leader available (election in progress or all nodes down)
-        res.set_status(503);
-        res.write_json(
-          s::status = "unavailable",
-          s::error = "No leader available - cluster may be in election"
-        );
-      }
-    } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(
-        s::status = "error",
-        s::error = std::string("Health check failed: ") + e.what()
-      );
-    }
-  };
-
-  // GET /api/leader - Discover current cluster leader
-  api.get("/api/leader") = [](http_request& req, http_response& res) {
-    try {
-      std::string leader_host;
-      uint16_t leader_port = 7001;
-
-      // Try REDIRECT probe method (same as client.cpp)
-      if (discover_leader_from_cluster(leader_host, leader_port)) {
-        // Build JSON manually for complex structure
-        std::ostringstream json;
-        json << "{"
-             << "\"host\":\"" << leader_host << "\","
-             << "\"port\":" << leader_port << ","
-             << "\"status\":\"active\","
-             << "\"timestamp\":" << get_timestamp_ms()
-             << "}";
-
-        res.set_header("Content-Type", "application/json");
-        res.write(json.str());
-      } else {
-        res.set_status(503);
-        res.write_json(
-          s::error = "Leader not available",
-          s::status = "unavailable"
-        );
-      }
-    } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Discovery error: ") + e.what());
-    }
-  };
-
+  
   // Test simple parameterized route
   api.get("/test/{{name}}") = [](http_request& req, http_response& res) {
     auto params = req.url_parameters(s::name = std::string());
     res.write("Hello " + params.name);
-  };
-
-  // Test multi-level parameterized route
-  api.get("/api/test/{{key}}") = [](http_request& req, http_response& res) {
-    auto params = req.url_parameters(s::key = std::string());
-    res.write("API Test Key: " + params.key);
-  };
-
-  // Simple test of /api/keys path without db_client
-  api.get("/api/keys-test/{{key}}") = [](http_request& req, http_response& res) {
-    auto params = req.url_parameters(s::key = std::string());
-    res.write("Keys Test: " + params.key);
   };
 
   // GET /api/keys/prefix/{{prefix}} - Get keys with prefix
@@ -486,6 +414,147 @@ inline auto make_routes() {
     }
   };
 
+  // GET /api/cluster/status - Comprehensive cluster health status
+  // This mirrors the CLI client's 'status' command functionality
+  api.get("/api/cluster/status") = [](http_request& req, http_response& res) {
+    try {
+      // Cache to reduce control plane load
+      static std::mutex cacheMutex;
+      static std::string cachedResponse;
+      static uint64_t cacheTimestamp = 0;
+      static constexpr uint64_t CACHE_TTL_MS = 2000;  // 2 second cache
+
+      uint64_t now = get_timestamp_ms();
+
+      // Check cache
+      {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        if ((now - cacheTimestamp) < CACHE_TTL_MS && !cachedResponse.empty()) {
+          res.set_header("Content-Type", "application/json");
+          res.set_header("X-Cache", "HIT");
+          res.write(cachedResponse);
+          return;
+        }
+      }
+
+      // Query each node in cluster
+      std::ostringstream json;
+      json << "{";
+      json << "\"timestamp\":" << now << ",";
+      json << "\"nodes\":[";
+
+      int leaderCount = 0;
+      int leaderId = 0;
+      std::string leaderHost;
+
+      for (size_t i = 0; i < sizeof(CLUSTER)/sizeof(NodeInfo); i++) {
+        const auto& node = CLUSTER[i];
+
+        if (i > 0) json << ",";
+        json << "{";
+        json << "\"id\":" << node.id << ",";
+        json << "\"host\":\"" << node.host << "\",";
+        json << "\"port\":" << node.port << ",";
+
+        // Query control plane
+        sock_t s = tcp_connect(node.host, node.port);
+        if (s == NET_INVALID) {
+          json << "\"status\":\"OFFLINE\",\"role\":\"UNREACHABLE\"";
+          json << "}";
+          continue;
+        }
+
+        set_socket_timeouts(s, 1000);  // 1 second timeout
+        send_all(s, "CLUSTER_STATUS\n");
+
+        std::string line;
+        std::string role = "UNKNOWN";
+        uint64_t term = 0;
+        int nodeLeaderId = 0;
+        uint64_t lsn = 0;
+        long long lastHBAge = -1;
+        std::vector<std::tuple<int, std::string, uint64_t>> followers;
+
+        while (recv_line(s, line)) {
+          if (line == "END") break;
+
+          auto tokens = split(trim(line), ' ');
+          if (tokens.empty()) continue;
+
+          // Format: STATUS <nodeId> <role> <term> <leaderId> <myLSN> <lastHBAge>
+          if (tokens[0] == "STATUS" && tokens.size() >= 7) {
+            role = tokens[2];
+            term = std::stoull(tokens[3]);
+            nodeLeaderId = std::stoi(tokens[4]);
+            lsn = std::stoull(tokens[5]);
+            lastHBAge = std::stoll(tokens[6]);
+            if (role == "LEADER") {
+              leaderCount++;
+              leaderId = node.id;
+              leaderHost = node.host;
+            }
+          } else if (tokens[0] == "FOLLOWER_STATUS" && tokens.size() >= 4) {
+            int fid = std::stoi(tokens[1]);
+            std::string fstatus = tokens[2];
+            uint64_t flsn = std::stoull(tokens[3]);
+            followers.push_back({fid, fstatus, flsn});
+          }
+        }
+        net_close(s);
+
+        json << "\"status\":\"ONLINE\",";
+        json << "\"role\":\"" << role << "\",";
+        json << "\"term\":" << term << ",";
+        json << "\"leaderId\":" << nodeLeaderId << ",";
+        json << "\"lsn\":" << lsn << ",";
+        json << "\"lastHbAge\":" << lastHBAge;
+
+        // Include followers if this node is the leader
+        if (!followers.empty()) {
+          json << ",\"followers\":[";
+          for (size_t fi = 0; fi < followers.size(); fi++) {
+            if (fi > 0) json << ",";
+            json << "{\"id\":" << std::get<0>(followers[fi])
+                 << ",\"status\":\"" << std::get<1>(followers[fi]) << "\""
+                 << ",\"lsn\":" << std::get<2>(followers[fi]) << "}";
+          }
+          json << "]";
+        }
+
+        json << "}";
+      }
+
+      json << "],";
+      json << "\"leader\":{";
+      if (leaderId > 0) {
+        json << "\"id\":" << leaderId << ",\"host\":\"" << leaderHost << "\",\"available\":true";
+      } else {
+        json << "\"id\":0,\"host\":\"\",\"available\":false";
+      }
+      json << "},";
+
+      // Split brain detection
+      json << "\"splitBrain\":" << (leaderCount > 1 ? "true" : "false");
+      json << "}";
+
+      std::string response = json.str();
+
+      // Update cache
+      {
+        std::lock_guard<std::mutex> lock(cacheMutex);
+        cachedResponse = response;
+        cacheTimestamp = now;
+      }
+
+      res.set_header("Content-Type", "application/json");
+      res.set_header("X-Cache", "MISS");
+      res.write(response);
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(s::error = std::string("Cluster status error: ") + e.what());
+    }
+  };
+
   // Static file serving for Vue.js SPA (MUST BE LAST - catch-all route)
   api.get("/{{path...}}") = [](http_request& req, http_response& res) {
     auto url_params = req.url_parameters(s::path = std::string_view());
@@ -520,13 +589,13 @@ inline auto make_routes() {
 
     // Determine MIME type based on file extension
     std::string mime_type = "text/html";
-    if (path.ends_with(".js")) mime_type = "application/javascript";
-    else if (path.ends_with(".css")) mime_type = "text/css";
-    else if (path.ends_with(".json")) mime_type = "application/json";
-    else if (path.ends_with(".png")) mime_type = "image/png";
-    else if (path.ends_with(".jpg") || path.ends_with(".jpeg")) mime_type = "image/jpeg";
-    else if (path.ends_with(".svg")) mime_type = "image/svg+xml";
-    else if (path.ends_with(".ico")) mime_type = "image/x-icon";
+    if (ends_with(path, ".js")) mime_type = "application/javascript";
+    else if (ends_with(path, ".css")) mime_type = "text/css";
+    else if (ends_with(path, ".json")) mime_type = "application/json";
+    else if (ends_with(path, ".png")) mime_type = "image/png";
+    else if (ends_with(path, ".jpg") || ends_with(path, ".jpeg")) mime_type = "image/jpeg";
+    else if (ends_with(path, ".svg")) mime_type = "image/svg+xml";
+    else if (ends_with(path, ".ico")) mime_type = "image/x-icon";
 
     // Read and serve file
     std::string content((std::istreambuf_iterator<char>(file)),

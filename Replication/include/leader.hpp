@@ -23,11 +23,16 @@ using std::atomic;
 // Laikom socket'ą, iki kokio lsn follower'is patvirtino (ACK),
 // ir ar jis dar laikomas gyvu.
 struct FollowerConnection {
+  int      id{0};  // Follower node ID (1-4)
   sock_t   followerSocket{NET_INVALID};
   uint64_t ackedUptoLsn{0};
   bool     isAlive{true};
+  uint64_t lastSeenMs{0};  // Timestamp when follower was last seen (for status caching)
   mutex    connectionMutex;
 };
+
+// How long to consider a follower "recently seen" for status reporting (10 seconds)
+static constexpr uint64_t FOLLOWER_STATUS_CACHE_MS = 10000;
 
 class Leader {
 private:
@@ -61,7 +66,7 @@ private:
     // Thread Loops
     void AnnouncePresence();
     void AcceptFollowers();
-    void HandleFollower(shared_ptr<FollowerConnection> follower);
+    void HandleFollower(sock_t followerSocket);
     void ServeClients();
     void HandleClient(sock_t clientSocket);
 

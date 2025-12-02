@@ -120,10 +120,11 @@ class DatabaseAPI {
   }
 
   /**
-   * Get cluster health
+   * Get comprehensive cluster status
+   * Returns detailed information about all nodes, leader, followers, and split brain detection
    */
-  async health() {
-    const response = await axios.get(`${this.baseURL}/health`);
+  async getClusterStatus() {
+    const response = await axios.get(`${this.baseURL}/cluster/status`);
     return response.data;
   }
 }

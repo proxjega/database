@@ -1,5 +1,6 @@
 #include "../include/common.hpp"
 #include "../include/rules.hpp"
+#include "../../btree/include/database.h"
 #include <chrono>
 #include <thread>
 #include <atomic>
@@ -69,22 +70,17 @@ static std::atomic<int> g_election_term{0};
 static constexpr int CLUSTER_N =
     (int)(sizeof(CLUSTER) / sizeof(CLUSTER[0]));
 
-// Paskutinio žinomo „nominal“ leaderio id (iš heartbeat'ų)
+// Paskutinio žinomo „nominal" leaderio id (iš heartbeat'ų)
 static int       g_leader_id{0};
-// „Efektyvus“ leaderis – tas kuriuo jau tikim ir kuriam spawninam follower child
+// „Efektyvus" leaderis – tas kuriuo jau tikim ir kuriam spawninam follower child
 static int       g_effective_leader{0};
 // Nuo kada (ms) nuolat matom tą patį leader_id per HB, kad jį patvirtinti kaip effective
 static long long g_leader_seen_since_ms{0};
 
+
 // -------- Time helpers --------
 
-// Dabartinis laikas ms (steady_clock) – naudojam heartbeat timeout'ams ir pan.
-static inline long long now_ms() {
-  using namespace std::chrono;
-  return duration_cast<milliseconds>(
-           steady_clock::now().time_since_epoch()
-         ).count();
-}
+// now_ms() is defined in common.hpp - returns current time in ms since epoch
 
 // Gražina atsitiktinį rinkimų timeout'ą ms (kad node'ai nesinukentintų visi vienu metu)
 static int random_election_timeout_ms() {
@@ -139,13 +135,14 @@ static std::string my_db_name() {
     return "node" + std::to_string(g_self_id);
 }
 
-// Apskaičiuoja paskutinį seq šio node'o loge (kviečia parse_last_seq_from_file)
+// Apskaičiuoja paskutinį seq šio node'o loge
+// Reads LSN from Database metapage instead of WAL files
+// This ensures correct LSN even after Optimize() which deletes WAL files
 static uint64_t compute_my_last_seq() {
     try {
-        // Instantiate WAL to read state
-        // Note: This works because WAL constructor reads all segments to find last LSN
-        WAL wal(my_db_name());
-        return wal.GetCurrentSequenceNumber();
+        // Read LSN from database metapage (always persisted)
+        Database db(my_db_name());
+        return db.getLSN();
     } catch (...) {
         return 0;
     }
@@ -179,6 +176,9 @@ static bool child_alive(Child &child) {
   return r == 0; // 0 – procesas dar gyvas
 #endif
 }
+
+// Global child process handle (leader or follower)
+static Child g_child;
 
 // Paleidžia naują procesą su komandą cmd ir užpildo Child struktūrą.
 static bool start_process(const std::string &cmd, Child &child) {
@@ -388,6 +388,49 @@ static void handle_conn(sock_t client_socket) {
         g_votes_received.fetch_add(1);
       }
 
+      net_close(client_socket);
+      return;
+    }
+
+    // CLUSTER_STATUS – returns node's view of cluster state
+    if (tokens[0] == "CLUSTER_STATUS") {
+      std::ostringstream response;
+
+      // Node's own status
+      int myId = g_self_id;
+      std::string myRole = (g_cluster_state.state == NodeState::LEADER) ? "LEADER" :
+                           (g_cluster_state.state == NodeState::CANDIDATE) ? "CANDIDATE" : "FOLLOWER";
+      uint64_t myTerm = g_current_term.load();
+      int leaderId = g_effective_leader;
+      uint64_t myLSN = g_my_last_seq.load();
+      long long lastHBAge = now_ms() - g_last_heartbeat_ms.load();
+
+      response << "STATUS " << myId << " " << myRole << " " << myTerm << " "
+               << leaderId << " " << myLSN << " " << lastHBAge << "\n";
+
+      // If this node is the leader, query follower status from leader process
+      if (g_cluster_state.state == NodeState::LEADER && child_alive(g_child)) {
+        // Query local leader process via localhost CLIENT_PORT
+        sock_t leader_sock = tcp_connect("127.0.0.1", CLIENT_PORT);
+        if (leader_sock != NET_INVALID) {
+          set_socket_timeouts(leader_sock, 1000); // 1s timeout
+          send_all(leader_sock, "INTERNAL_FOLLOWER_STATUS\n");
+
+          // Read follower status lines
+          std::string follower_line;
+          while (recv_line(leader_sock, follower_line)) {
+            follower_line = trim(follower_line);
+            if (follower_line == "END") break;
+            if (follower_line.substr(0, 16) == "FOLLOWER_STATUS ") {
+              response << follower_line << "\n";
+            }
+          }
+          net_close(leader_sock);
+        }
+      }
+
+      response << "END\n";
+      send_all(client_socket, response.str());
       net_close(client_socket);
       return;
     }
@@ -647,8 +690,8 @@ static void follower_monitor() {
 
 // -------- role → child process manager --------
 
-// Čia tvarkom realius „data plane“ procesus: leader ir follower binarus.
-static Child g_child;
+// Čia tvarkom realius „data plane" procesus: leader ir follower binarus.
+// (g_child is now declared earlier in the file after the Child struct definition)
 
 // Šitas thread'as žiūri į NodeState ir spawn'ina / stabdo
 // atitinkamą child procesą: leader arba follower.
