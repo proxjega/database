@@ -16,10 +16,10 @@ struct NodeInfo {
 // Fiksuotas klasterio narių sąrašas.
 // Use 'static' to allow inclusion in multiple translation units.
 static NodeInfo CLUSTER[] = {
-    {1, "127.0.0.1", 8001},  // node1
-    {2, "127.0.0.2",  8002},  // node2
-    {3, "127.0.0.3",  8003},  // node3
-    {4, "127.0.0.4",  8004},  // node4
+    {1, "100.117.80.126", 8001},  // node1 - Anthony (207.180.251.206)
+    {2, "100.70.98.49",   8002},  // node2 - Austin  (167.86.66.60)
+    {3, "100.118.80.33",  8003},  // node3 - Edward  (167.86.83.198)
+    {4, "100.116.151.88", 8004},  // node4 - Anthony (167.86.81.251)
 };
 
 // Lyderio atviri prievadai.
