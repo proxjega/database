@@ -255,10 +255,28 @@ bool Follower::ApplyResetWAL(uint64_t &localLSN) {
 }
 
 void Follower::ServeReadOnly() {
-    sock_t listenSocket = tcp_listen(this->readPort);
+    sock_t listenSocket = NET_INVALID;
+
+    // Retry binding up to 10 times with 2-second delay
+    // This handles TIME_WAIT state after process restarts during role transitions
+    for (int retry = 0; retry < 10 && this->running; ++retry) {
+        listenSocket = tcp_listen(this->readPort);
+        if (listenSocket != NET_INVALID) {
+            break;  // Success!
+        }
+
+        log_line(LogLevel::WARN,
+                 "Follower read-only bind failed on port " + std::to_string(this->readPort) +
+                 ", retrying in 2s (attempt " + std::to_string(retry + 1) + "/10)");
+
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    }
+
     if (listenSocket == NET_INVALID) {
-        log_line(LogLevel::ERROR, "Follower Read-Only listen failed on " + std::to_string(this->readPort));
-        return;
+        log_line(LogLevel::ERROR,
+                 "Follower cannot bind read-only port " + std::to_string(this->readPort) +
+                 " after 10 retries, exiting ServeReadOnly");
+        return;  // Only return after exhausting retries
     }
 
     this->readListenSocket = listenSocket;

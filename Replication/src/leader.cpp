@@ -379,6 +379,16 @@ void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
     this->BroadcastWalRecord(walRecord);
     this->WaitForAcks(newLsn);
 
+    // Verify we received enough ACKs for quorum
+    size_t actualAcks = this->CountAcks(newLsn);
+    if (actualAcks < static_cast<size_t>(this->requiredAcks)) {
+      log_line(LogLevel::ERROR, "SET operation failed: insufficient ACKs (got " +
+               std::to_string(actualAcks) + ", need " + std::to_string(this->requiredAcks) + ")");
+      send_all(clientSocket, "ERR_INSUFFICIENT_ACKS Replication failed (got " +
+               std::to_string(actualAcks) + " ACKs, need " + std::to_string(this->requiredAcks) + ")\n");
+      return;
+    }
+
     send_all(clientSocket, "OK " + std::to_string(newLsn) + "\n");
   } else {
     send_all(clientSocket, "ERR_WRITE_FAILED\n");
@@ -403,6 +413,16 @@ void Leader::HandleDel(sock_t clientSocket, const vector<string> &tokens) {
 
     this->BroadcastWalRecord(walRecord);
     this->WaitForAcks(newLsn);
+
+    // Verify we received enough ACKs for quorum
+    size_t actualAcks = this->CountAcks(newLsn);
+    if (actualAcks < static_cast<size_t>(this->requiredAcks)) {
+      log_line(LogLevel::ERROR, "DEL operation failed: insufficient ACKs (got " +
+               std::to_string(actualAcks) + ", need " + std::to_string(this->requiredAcks) + ")");
+      send_all(clientSocket, "ERR_INSUFFICIENT_ACKS Replication failed (got " +
+               std::to_string(actualAcks) + " ACKs, need " + std::to_string(this->requiredAcks) + ")\n");
+      return;
+    }
 
     send_all(clientSocket, "OK " + std::to_string(newLsn) + "\n");
   } else {
@@ -518,12 +538,16 @@ int Leader::CountAliveFollowers() {
     int count = 0;
     uint64_t currentTime = now_ms();
 
+    // Use aggressive 2-second timeout for quorum checks (safety-critical)
+    // This is much shorter than FOLLOWER_STATUS_CACHE_MS (used for UI status)
+    static constexpr uint64_t QUORUM_TIMEOUT_MS = 2000;
+
     for (const auto& follower : this->followers) {
         // Count follower as alive if:
-        // 1. Currently connected (isAlive = true), OR
-        // 2. Recently seen (within cache window)
-        bool recentlySeen = (currentTime - follower->lastSeenMs) < FOLLOWER_STATUS_CACHE_MS;
-        if (follower->isAlive || recentlySeen) {
+        // 1. Connection is marked alive AND has communicated recently
+        // 2. This aggressive timeout ensures dead followers are detected quickly
+        bool recentlySeen = (currentTime - follower->lastSeenMs) < QUORUM_TIMEOUT_MS;
+        if (follower->isAlive && recentlySeen) {
             count++;
         }
     }
