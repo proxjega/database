@@ -17,6 +17,8 @@
 #include <cerrno>
 #include <algorithm>
 #include <iomanip>
+#include <fcntl.h>
+#include <sys/select.h>
 #include "../../btree/include/logger.hpp"
 
 // ---------- Logging ----------
@@ -209,7 +211,7 @@ static inline sock_t tcp_accept(sock_t listenSock) {
 }
 
 // Ustanodo TCP ryšį su duotu host:port ir grąžina socket’ą, jei pavyksta.
-static inline sock_t tcp_connect(const std::string& host, uint16_t port) {
+static inline sock_t tcp_connect(const std::string& host, uint16_t port, int timeout_ms = 2000) {
   net_init_once();
 
   addrinfo hints{};
@@ -221,7 +223,6 @@ static inline sock_t tcp_connect(const std::string& host, uint16_t port) {
 
   // Išsprendžiam host vardą į IP ir gaunam galimus adresus.
   if (getaddrinfo(host.c_str(), portStr.c_str(), &hints, &result) != 0) {
-    // ČIA BUVO LOG_WARN – praleista, kad netriukšmautų.
     return NET_INVALID;
   }
 
@@ -234,15 +235,69 @@ static inline sock_t tcp_connect(const std::string& host, uint16_t port) {
       continue;
     }
 
+    // Set socket to non-blocking mode for connect timeout
 #ifdef _WIN32
-    if (connect(clientSock, rp->ai_addr, (int)rp->ai_addrlen) == 0) break;
+    u_long mode = 1;
+    ioctlsocket(clientSock, FIONBIO, &mode);
 #else
-    if (connect(clientSock, rp->ai_addr, rp->ai_addrlen) == 0) {
-      break;
-    }
+    int flags = fcntl(clientSock, F_GETFL, 0);
+    fcntl(clientSock, F_SETFL, flags | O_NONBLOCK);
 #endif
 
-    // Jei prisijungti nepavyko – uždarom ir bandom kitą adresą.
+    // Attempt connection
+#ifdef _WIN32
+    int conn_result = connect(clientSock, rp->ai_addr, (int)rp->ai_addrlen);
+#else
+    int conn_result = connect(clientSock, rp->ai_addr, rp->ai_addrlen);
+#endif
+
+    if (conn_result == 0) {
+      // Immediate success - restore blocking mode
+#ifdef _WIN32
+      mode = 0;
+      ioctlsocket(clientSock, FIONBIO, &mode);
+#else
+      fcntl(clientSock, F_SETFL, flags);
+#endif
+      break;
+    }
+
+#ifdef _WIN32
+    if (WSAGetLastError() == WSAEWOULDBLOCK) {
+#else
+    if (errno == EINPROGRESS) {
+#endif
+      // Connection in progress - wait with timeout
+      fd_set write_fds;
+      FD_ZERO(&write_fds);
+      FD_SET(clientSock, &write_fds);
+
+      struct timeval tv;
+      tv.tv_sec = timeout_ms / 1000;
+      tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+      int sel_result = select(clientSock + 1, nullptr, &write_fds, nullptr, &tv);
+
+      if (sel_result > 0) {
+        // Check if connection succeeded
+        int error = 0;
+        socklen_t len = sizeof(error);
+        getsockopt(clientSock, SOL_SOCKET, SO_ERROR, (char*)&error, &len);
+
+        if (error == 0) {
+          // Success - restore blocking mode
+#ifdef _WIN32
+          mode = 0;
+          ioctlsocket(clientSock, FIONBIO, &mode);
+#else
+          fcntl(clientSock, F_SETFL, flags);
+#endif
+          break;
+        }
+      }
+    }
+
+    // Connection failed or timed out - close and try next address
     net_close(clientSock);
     clientSock = NET_INVALID;
   }

@@ -25,7 +25,7 @@
               <!-- Requirement #3: Show "Node # (IP)" format -->
               {{ node.name }}
               <span v-if="!isNodeAvailable(node.id)"> - OFFLINE</span>
-              <span v-if="node.id === leaderId"> ⭐ LEADER</span>
+              <span v-if="node.id === leaderId"> LEADER</span>
             </option>
           </select>
         </div>
