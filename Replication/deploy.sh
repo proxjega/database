@@ -42,7 +42,8 @@ ssh_exec_nontty() {
 
 # 1. Stop existing processes
 echo "[1/7] Stopping existing cluster processes..."
-ssh_exec "killall -9 run leader follower 2>/dev/null || true; sleep 1" || true
+# Use graceful kill (SIGTERM) first, then force kill
+ssh_exec "killall run leader follower 2>/dev/null || true; sleep 2; killall -9 run leader follower 2>/dev/null || true" || true
 
 # 2. Clean old data
 echo "[2/7] Cleaning old data..."

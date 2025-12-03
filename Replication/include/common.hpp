@@ -169,7 +169,14 @@ static inline sock_t tcp_listen(uint16_t port, int backlog = Consts::LISTEN_BACK
 #ifdef _WIN32
   setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseFlag, sizeof(reuseFlag));
 #else
+  // Set SO_REUSEADDR to allow binding to ports in TIME_WAIT
   setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, sizeof(reuseFlag));
+
+  // Set SO_LINGER to force immediate close without TIME_WAIT
+  struct linger lin;
+  lin.l_onoff = 1;   // Enable linger
+  lin.l_linger = 0;  // Close immediately, send RST instead of FIN
+  setsockopt(listenSock, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
 #endif
 
   sockaddr_in address{};
