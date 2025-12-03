@@ -84,7 +84,7 @@ void Follower::SyncWithLeader() {
                 "connect to leader failed, sleeping " + std::to_string(backoffMs) +
                 " ms before retry (failure_count=" + std::to_string(failureCount) + ")");
 
-            std::this_thread::sleep_for(std::chrono::seconds(backoffMs));
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
             backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
             continue;
         }
@@ -95,7 +95,6 @@ void Follower::SyncWithLeader() {
         }
 
         // Užtikriname, kad nekabėsime, jei lyderis prapuls.
-        backoffMs = BASE_BACKOFF_MS;
         set_socket_timeouts(leaderSocket, Consts::SOCKET_TIMEOUT_MS);
         this->currentLeaderSocket = leaderSocket;
 
@@ -104,24 +103,20 @@ void Follower::SyncWithLeader() {
             net_close(this->currentLeaderSocket);
             this->currentLeaderSocket = NET_INVALID;
 
-            // failureCount++;
+            failureCount++;
             std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
             backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
             continue;
         }
 
-        // 3. Susiconnect'inome – reset'inam backoff.
-        backoffMs = BASE_BACKOFF_MS;
-        failureCount = 0;
-        
-        // 4. Atliekame replikaciją.
+        // 3. Atliekame replikaciją.
         auto status = this->RunReplicationSession(lastAppliedLsn);
 
-        // 5. Disconnect.
+        // 4. Disconnect.
         net_close(this->currentLeaderSocket);
         this->currentLeaderSocket = NET_INVALID;
 
-        // 6. Įvertiname replikacijos rezultatą.
+        // 5. Įvertiname replikacijos rezultatą.
         if (status == SessionStatus::PROTOCOL_ERROR) {
             log_line(LogLevel::ERROR, "Leader violated protocol! Incrementing failure count.");
             failureCount++;
