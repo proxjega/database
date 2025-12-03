@@ -75,6 +75,11 @@ void Follower::SyncWithLeader() {
     log_line(LogLevel::DEBUG, "LSN FROM META PAGE: " + std::to_string(lastAppliedLsn));
 
     while (this->running) {
+        if (failureCount >= MAX_FAILURES_BEFORE_EXIT) {
+            log_line(LogLevel::ERROR, "Too many failures talking to leader (HELLO), exiting");
+            std::exit(2);
+        }
+
         // 1. Bandome susiconnect'int su leader.
         sock_t leaderSocket = this->TryConnect();
 
@@ -87,11 +92,6 @@ void Follower::SyncWithLeader() {
             std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
             backoffMs = std::min(backoffMs * 2, MAX_BACKOFF_MS);
             continue;
-        }
-
-        if (failureCount >= MAX_FAILURES_BEFORE_EXIT) {
-            log_line(LogLevel::ERROR, "Too many failures talking to leader (HELLO), exiting");
-            std::exit(2);
         }
 
         // Užtikriname, kad nekabėsime, jei lyderis prapuls.
@@ -133,6 +133,10 @@ void Follower::SyncWithLeader() {
 sock_t Follower::TryConnect() {
     log_line(LogLevel::INFO, "trying to connect to leader " + this->leaderHost + ":" + std::to_string(this->leaderPort));
     sock_t leaderSocket = tcp_connect(this->leaderHost, this->leaderPort);
+
+    if (leaderSocket == NET_INVALID) {
+        return leaderSocket;
+    }
 
     log_line(LogLevel::INFO, "Connected to Leader at " + this->leaderHost + ":" + std::to_string(this->leaderPort));
     return leaderSocket;
