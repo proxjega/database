@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <lithium_http_server.hh>
 #include "symbols.hh"
 #include "db_client.hpp"
@@ -403,7 +404,7 @@ inline auto make_routes() {
     try {
       auto params = req.url_parameters(s::key = std::string());
       std::string key = params.key;
-      auto query = req.get_parameters(s::count = std::optional<int>());
+      auto query = req.get_parameters(s::count = std::optional<int>(), s::nodeId = std::optional<int>());
 
       if (key.empty()) {
         res.set_status(400);
@@ -412,8 +413,19 @@ inline auto make_routes() {
       }
 
       uint32_t count = query.count.value_or(10);
+      int nodeId = query.nodeId.value_or(0);
 
-      auto result = db_client->getff(key, count);
+      std::string targetHost;
+      uint16_t targetPort;
+
+      if (!get_target_node(nodeId, targetHost, targetPort, false)) {
+        res.set_status(500);
+        res.write_json(s::error = "Failed to discover database leader");
+        return;
+      }
+
+      auto temp_client = std::make_shared<DbClient>(target_host, target_port);
+      auto result = temp_client->getff(key, count);
 
       if (result.success) {
         // Build JSON array manually since Lithium's write_json doesn't support complex structures easily
