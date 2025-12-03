@@ -1,4 +1,5 @@
 #include "../include/follower.hpp"
+#include "../include/rules.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -301,7 +302,7 @@ void Follower::HandleRangeQuery(sock_t sock, const vector<string> &tokens, bool 
 }
 
 void Follower::HandleRedirect(sock_t sock) {
-    send_all(sock, "REDIRECT " + this->leaderHost + " " + std::to_string(this->leaderPort) + "\n");
+    send_all(sock, "REDIRECT " + this->leaderHost + " " + std::to_string(CLIENT_PORT) + "\n");
 }
 
 void Follower::HandleClient(sock_t clientSocket) {
