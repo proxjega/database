@@ -23,11 +23,15 @@ inline bool ends_with(const std::string& str, const std::string& suffix) {
 // Helper function to discover current leader from cluster
 // Uses same logic as ./client leader command
 inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_port) {
+  // const std::vector<std::string> CLUSTER_NODES = {
+  //   "100.117.80.126",  // node1
+  //   "100.70.98.49",    // node2
+  //   "100.118.80.33",   // node3
+  //   "100.116.151.88"   // node4
+  // };
+
   const std::vector<std::string> CLUSTER_NODES = {
-    "100.117.80.126",  // node1
-    "100.70.98.49",    // node2
-    "100.118.80.33",   // node3
-    "100.116.151.88"   // node4
+    "127.0.0.1", "127.0.0.2", "127.0.0.3", "127.0.0.4"
   };
 
   // Tier 1: REDIRECT probe on follower read ports
@@ -145,7 +149,9 @@ inline auto make_routes() {
   http_api api;
 
   // Discover leader at server startup (best-effort)
-  std::string leader_host = "100.117.80.126";  // Fallback to node1
+  // std::string leader_host = "100.117.80.126";  // Fallback to node1
+  std::string leader_host = "127.0.0.1";  // Fallback to node1
+
   uint16_t leader_port = 7001;
   discover_leader_from_cluster(leader_host, leader_port);
 
