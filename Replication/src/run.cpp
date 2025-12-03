@@ -744,7 +744,7 @@ static void role_process_manager() {
         if (leader_node != nullptr) {
           const std::string &follower_log  = dbName;                           // WAL failas followeriui
           std::string follower_snap = "f" + std::to_string(g_self_id) + ".snap"; // snapshot failas
-          uint16_t    read_port     = FOLLOWER_READ_PORT(g_self_id);      // read-only API portas
+          uint16_t    read_port     = FOLLOWER_READ_PORT(g_self_id);  // Separate read-only port for followers
 #ifdef _WIN32
           std::string cmd = ".\\follower.exe " +
                             leader_node->host + " " +

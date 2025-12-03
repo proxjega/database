@@ -143,40 +143,28 @@ static bool split_host_port(const std::string& hostPortStr,
  * @return true, jei pavyko rasti; false – jei nepavyko.
  */
 static bool detect_leader_host(std::string &leaderHostOut) {
-  // 1) Bandome per follower read-only portus ir REDIRECT
-  for (auto& node : CLUSTER) {
-    uint16_t fport = FOLLOWER_READ_PORT(node.id);
-    sock_t sock = tcp_connect(node.host, fport);
-    if (sock == NET_INVALID) {
-      continue;
-    }
-
-    // bet kokia ne-GET komanda followeriui turi grąžinti REDIRECT
-    send_all(sock, "SET __probe__ 1\n");
-    std::string line;
-    if (!recv_line(sock, line)) {
-      net_close(sock);
-      continue;
-    }
-    net_close(sock);
-
-    auto parts = split(trim(line), ' ');
-    if (parts.size() >= 3 && parts[0] == "REDIRECT") {
-      leaderHostOut = parts[1]; // REDIRECT <host> <port>
-      return true;
-    }
-  }
-
-  // 2) Fallback – žiūrim, kuris host'as klauso CLIENT_PORT
+  // Find leader by checking which node listens on CLIENT_PORT (7001)
+  // Only leader binds to CLIENT_PORT, followers use FOLLOWER_READ_PORT
   for (auto& node : CLUSTER) {
     sock_t s = tcp_connect(node.host, CLIENT_PORT);
     if (s == NET_INVALID) {
       continue;
     }
-    // jei prisijungėm prie 7001 – laikom, kad ten leader
+
+    // Verify it's actually a leader by sending a test GET command
+    set_socket_timeouts(s, 1000);  // 1 second timeout
+    send_all(s, "GET __leader_check__\n");
+    std::string line;
+    if (recv_line(s, line)) {
+      auto parts = split(trim(line), ' ');
+      // Leader responds with VALUE or NOT_FOUND, not ERR_READ_ONLY
+      if (parts.size() > 0 && (parts[0] == "VALUE" || parts[0] == "NOT_FOUND")) {
+        net_close(s);
+        leaderHostOut = node.host;
+        return true;
+      }
+    }
     net_close(s);
-    leaderHostOut = node.host;
-    return true;
   }
 
   return false;

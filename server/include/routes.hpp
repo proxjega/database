@@ -153,15 +153,16 @@ inline uint64_t get_timestamp_ms() {
 
 // Helper to get target host/port based on optional nodeId parameter
 // Returns true on success, false if nodeId is invalid
+// requireLeader: true = write operation (must target leader on CLIENT_PORT)
+//                false = read operation (can target any node, followers use FOLLOWER_READ_PORT)
 inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_port, bool requireLeader = false) {
   if (nodeId > 0 && nodeId <= 4) {
     // Route to specific node
     const auto& node = CLUSTER[nodeId - 1];
     out_host = node.host;
-    out_port = 7001;  // All nodes use port 7001 for client API
 
-    // If write operation, verify it's the leader
     if (requireLeader) {
+      // Write operation: must go to leader on CLIENT_PORT (7001)
       std::string leader_host;
       uint16_t leader_port;
       if (!discover_leader_from_cluster(leader_host, leader_port)) {
@@ -170,11 +171,28 @@ inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_por
       if (out_host != leader_host) {
         return false;  // Specified node is not the leader
       }
+      out_port = CLIENT_PORT;  // Leader uses CLIENT_PORT (7001)
+    } else {
+      // Read operation: determine port based on whether node is leader or follower
+      std::string leader_host;
+      uint16_t leader_port;
+
+      if (discover_leader_from_cluster(leader_host, leader_port) && out_host == leader_host) {
+        // This node is the leader, use CLIENT_PORT
+        out_port = CLIENT_PORT;  // Leader on port 7001
+      } else {
+        // This node is a follower, use FOLLOWER_READ_PORT
+        out_port = FOLLOWER_READ_PORT(nodeId);  // Follower read-only port (7101-7104)
+      }
     }
     return true;
   } else if (nodeId == 0) {
     // Auto-discover leader (default behavior)
-    return discover_leader_from_cluster(out_host, out_port);
+    if (discover_leader_from_cluster(out_host, out_port)) {
+      out_port = CLIENT_PORT;  // Leader always on CLIENT_PORT
+      return true;
+    }
+    return false;
   } else {
     // Invalid nodeId
     return false;
@@ -556,6 +574,11 @@ inline auto make_routes() {
   // Used by Vue.js UI to populate node selection dropdown
   api.get("/api/cluster/nodes") = [](http_request& req, http_response& res) {
     try {
+      // Discover leader to determine port assignments
+      std::string leader_host;
+      uint16_t leader_port;
+      bool leader_discovered = discover_leader_from_cluster(leader_host, leader_port);
+
       std::ostringstream json;
       json << "{\"nodes\":[";
 
@@ -563,11 +586,17 @@ inline auto make_routes() {
         const auto& node = CLUSTER[i];
         if (i > 0) json << ",";
 
+        // Determine client port: leader uses 7001, followers use 7101-7104
+        uint16_t clientPort = CLIENT_PORT;
+        if (leader_discovered && node.host != leader_host) {
+          clientPort = FOLLOWER_READ_PORT(node.id);  // Follower read-only port
+        }
+
         json << "{"
              << "\"id\":" << node.id << ","
              << "\"name\":\"Node " << node.id << " (" << node.host << ")\","
              << "\"host\":\"" << node.host << "\","
-             << "\"clientPort\":7001,"
+             << "\"clientPort\":" << clientPort << ","
              << "\"controlPort\":" << node.port
              << "}";
       }

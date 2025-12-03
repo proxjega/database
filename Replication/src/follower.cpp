@@ -325,10 +325,9 @@ void Follower::HandleClient(sock_t clientSocket) {
             else if (command == "GETFB" && tokens.size() >= 3) {
                 HandleRangeQuery(clientSocket, tokens, false);
             }
-            else if (command == "SET" || command == "PUT" || command == "DEL") {
-                HandleRedirect(clientSocket);
-            }
             else {
+                // Reject all write operations (SET, PUT, DEL) and unsupported commands
+                // Followers are read-only and only support: GET, GETFF, GETFB
                 send_all(clientSocket, "ERR_READ_ONLY\n");
             }
         }
