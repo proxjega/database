@@ -198,10 +198,13 @@ void Leader::HandleFollower(sock_t followerSocket) {
         // Found existing slot - reuse it
         follower = *iterator;
 
-        if (follower->isAlive && follower->followerSocket != NET_INVALID) {
+        if (follower->isAlive) {
           // Duplicate connection! Close old socket and replace
-          log_line(LogLevel::WARN, "Node " + std::to_string(nodeId) + " replacing active connection");
-          net_close(follower->followerSocket);
+          log_line(LogLevel::WARN, "Node " + std::to_string(nodeId) +
+                   " replacing active connection");
+          if (follower->followerSocket != NET_INVALID) {
+            net_close(follower->followerSocket);
+          }
         }
 
         // Update socket and mark alive
@@ -233,7 +236,7 @@ void Leader::HandleFollower(sock_t followerSocket) {
           ? ("WRITE "  + std::to_string(walRecord.lsn) + " " + walRecord.key + " " + format_length_prefixed_value(walRecord.value) + "\n")
           : ("DELETE " + std::to_string(walRecord.lsn) + " " + walRecord.key + "\n");
 
-        if (!send_all(followerSocket, message)) {
+        if (!send_all(follower->followerSocket, message)) {
           // Jei siuntimas nepavyksta – nutraukiam šitą follower'į
           follower->isAlive = false;
           return;
@@ -246,14 +249,11 @@ void Leader::HandleFollower(sock_t followerSocket) {
     }
 
     // 4. Laukiam ACK.
-    while (follower->isAlive && this->running && follower->followerSocket == followerSocket) {
+    while (follower->isAlive && this->running) {
       string line;
-      if (!recv_line(followerSocket, line)) {
+      if (!recv_line(follower->followerSocket, line)) {
         // nutrūkęs ryšys / klaida
-        if (follower->followerSocket == followerSocket) {
-          follower->isAlive = false;
-        }
-
+        follower->isAlive = false;
         break;
       }
 
@@ -271,17 +271,11 @@ void Leader::HandleFollower(sock_t followerSocket) {
     }
   } catch (const std::exception& ex) {
     log_line(LogLevel::ERROR, string("Exception in follower_thread: ") + ex.what());
-    if (follower && follower->followerSocket == followerSocket) {
-      follower->isAlive = false;
-    }
+    if (follower) follower->isAlive = false;
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown exception in follower_thread");
-    if (follower && follower->followerSocket == followerSocket) {
-      follower->isAlive = false;
-    }
+    if (follower) follower->isAlive = false;
   }
-
-  net_close(followerSocket);
 }
 
 // Išsiunčia vieną WAL įrašą visiems aktyviems follower'iams.
