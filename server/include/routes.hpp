@@ -424,7 +424,7 @@ inline auto make_routes() {
         return;
       }
 
-      auto temp_client = std::make_shared<DbClient>(target_host, target_port);
+      auto temp_client = std::make_shared<DbClient>(targetHost, targetPort);
       auto result = temp_client->getff(key, count);
 
       if (result.success) {
