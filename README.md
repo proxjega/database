@@ -233,63 +233,23 @@ make all
 ./build/main  # CLI interaktyvus režimas
 ```
 
-### 2. SSH Key Setup (Režimas 2 - Pirmas Kartas)
+### 2. SSH Key Setup (Režimas 2 - One Time)
 
-**Prieš deployment, sukonfigūruoti SSH key autentifikaciją:**
+**Setup passwordless SSH authentication:**
 
 ```bash
-# 1. Generuoti SSH key
-ssh-keygen -t ed25519 -f ~/.ssh/cluster_deploy -C "cluster-deployment"
+# Generate SSH key (if you don't have one)
+ssh-keygen -t ed25519
 
-# 2. Kopijuoti public key į kiekvieną serverį (naudoti esamus passwords paskutinį kartą)
-ssh-copy-id -i ~/.ssh/cluster_deploy.pub Anthony@207.180.251.206  # Node 1
-ssh-copy-id -i ~/.ssh/cluster_deploy.pub Austin@167.86.66.60      # Node 2
-ssh-copy-id -i ~/.ssh/cluster_deploy.pub Edward@167.86.83.198     # Node 3
-ssh-copy-id -i ~/.ssh/cluster_deploy.pub Anthony@167.86.81.251    # Node 4
+# Copy public key to each remote server
+ssh-copy-id Anthony@207.180.251.206  # Node 1
+ssh-copy-id Austin@167.86.66.60      # Node 2
+ssh-copy-id Edward@167.86.83.198     # Node 3
+ssh-copy-id Anthony@167.86.81.251    # Node 4
 
-# 3. Sukonfigūruoti ~/.ssh/config
-cat >> ~/.ssh/config << 'EOF'
-Host cluster-node1
-    HostName 207.180.251.206
-    User Anthony
-    IdentityFile ~/.ssh/cluster_deploy
-    ServerAliveInterval 30
-    ServerAliveCountMax 3
-
-Host cluster-node2
-    HostName 167.86.66.60
-    User Austin
-    IdentityFile ~/.ssh/cluster_deploy
-    ServerAliveInterval 30
-    ServerAliveCountMax 3
-
-Host cluster-node3
-    HostName 167.86.83.198
-    User Edward
-    IdentityFile ~/.ssh/cluster_deploy
-    ServerAliveInterval 30
-    ServerAliveCountMax 3
-
-Host cluster-node4
-    HostName 167.86.81.251
-    User Anthony
-    IdentityFile ~/.ssh/cluster_deploy
-    ServerAliveInterval 30
-    ServerAliveCountMax 3
-EOF
-
-# 4. Nustatyti permissions
-chmod 600 ~/.ssh/config ~/.ssh/cluster_deploy
-chmod 644 ~/.ssh/cluster_deploy.pub
-
-# 5. Testuoti prisijungimus (neturėtų prašyti password)
-ssh cluster-node1 'echo "Node 1 OK"'
-ssh cluster-node2 'echo "Node 2 OK"'
-ssh cluster-node3 'echo "Node 3 OK"'
-ssh cluster-node4 'echo "Node 4 OK"'
+# Test connection (should not ask for password)
+ssh Anthony@207.180.251.206 'echo OK'
 ```
-
-**Pastaba:** Deployment ir tunnel scripts naudoja SSH key autentifikaciją - neturi hardcoded passwords.
 
 ### 3. Deploy Remote Cluster (Režimas 2)
 
@@ -300,9 +260,15 @@ cd Replication
 ./deploy_all.sh
 ```
 
+**Remote Servers:**
+- Node 1: Anthony@207.180.251.206 (Tailscale: 100.117.80.126)
+- Node 2: Austin@167.86.66.60 (Tailscale: 100.70.98.49)
+- Node 3: Edward@167.86.83.198 (Tailscale: 100.118.80.33)
+- Node 4: Anthony@167.86.81.251 (Tailscale: 100.116.151.88)
+
 **Deploy script automatiškai:**
 - Kompiliuoja lokaliai (`make all`)
-- Upload binaries per SSH (key-based auth)
+- Upload binaries per SSH
 - Sustabdo senus procesus
 - Paleidžia naujus procesus
 - Raft election vyksta automatiškai (~3 sek)

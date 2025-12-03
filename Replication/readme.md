@@ -121,8 +121,15 @@ static NodeInfo CLUSTER[] = {
     {3, "100.118.80.33",  8003},  // Node 3 Tailscale IP
     {4, "100.116.151.88", 8004},  // Node 4 Tailscale IP
 };
-
 ```
+
+**Physical servers (for deployment):**
+- Node 1: Anthony@207.180.251.206 - `/home/Anthony/database`
+- Node 2: Austin@167.86.66.60 - `/home/Austin/database`
+- Node 3: Edward@167.86.83.198 - `/home/Edward/database`
+- Node 4: Anthony@167.86.81.251 - `/home/Anthony/database`
+
+**Note:** Use SSH key authentication (see main README for setup instructions)
 
 **Kaip paleisti:**
 - SSH į kiekvieną VPS
