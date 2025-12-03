@@ -36,42 +36,33 @@ static inline bool parse_host_port(const std::string& host_port, std::string& ho
   }
 }
 
-// CONTROL_PLANE_TUNNEL_MAP: Maps Tailscale control plane addresses to local tunnel endpoints
-// Used by cluster/status to query node status via SSH tunnels
+// CONTROL_PLANE_TUNNEL_MAP: Direct Tailscale connections (no translation needed)
+// Used by cluster/status to query node status via direct Tailscale network
 static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
-  {"100.117.80.126:8001", "127.0.0.1:8001"}, // Node 1 control plane
-  {"100.70.98.49:8002",   "127.0.0.1:8002"}, // Node 2 control plane
-  {"100.118.80.33:8003",  "127.0.0.1:8003"}, // Node 3 control plane
-  {"100.116.151.88:8004", "127.0.0.1:8004"}  // Node 4 control plane
+  {"100.117.80.126:8001", "100.117.80.126:8001"}, // Node 1 control plane (direct)
+  {"100.70.98.49:8002",   "100.70.98.49:8002"},   // Node 2 control plane (direct)
+  {"100.118.80.33:8003",  "100.118.80.33:8003"},  // Node 3 control plane (direct)
+  {"100.116.151.88:8004", "100.116.151.88:8004"}  // Node 4 control plane (direct)
 };
 
 inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_port) {
-  // CLUSTER_NODES: Local tunnel endpoints (127.0.0.1:710x) mapped to remote CLIENT_PORT (7001).
+  // CLUSTER_NODES: Direct Tailscale connections to remote nodes on port 7001
   const std::vector<std::string> CLUSTER_NODES = {
-    "127.0.0.1:7101",
-    "127.0.0.1:7102",
-    "127.0.0.1:7103",
-    "127.0.0.1:7104"
+    "100.117.80.126:7001",  // Node 1
+    "100.70.98.49:7001",    // Node 2
+    "100.118.80.33:7001",   // Node 3
+    "100.116.151.88:7001"   // Node 4
   };
 
-  // TAILSCALE_TO_LOCAL_MAP: Maps the unreachable internal cluster IP (Tailscale)
-  // back to the reachable local tunnel IP:Port.
-  const static std::unordered_map<std::string, std::string> TAILSCALE_TO_LOCAL_MAP = {
-    {"100.117.80.126", "127.0.0.1:7101"}, // Node 1
-    {"100.70.98.49",   "127.0.0.1:7102"}, // Node 2
-    {"100.118.80.33",  "127.0.0.1:7103"}, // Node 3
-    {"100.116.151.88", "127.0.0.1:7104"}  // Node 4
-  };
+  // Tier 1: REDIRECT probe on follower client ports (direct Tailscale connection)
+  for (const auto& node_host_port_str : CLUSTER_NODES) {
 
-  // Tier 1: REDIRECT probe on follower client ports (via tunnel)
-  for (const auto& local_host_port_str : CLUSTER_NODES) {
-    
-    std::string local_host;
-    uint16_t local_port;
-    if (!parse_host_port(local_host_port_str, local_host, local_port)) continue;
-    
-    // 1. Connect using the local tunnel address (e.g., 127.0.0.1:7101)
-    sock_t s = tcp_connect(local_host, local_port);
+    std::string node_host;
+    uint16_t node_port;
+    if (!parse_host_port(node_host_port_str, node_host, node_port)) continue;
+
+    // Connect directly to node via Tailscale
+    sock_t s = tcp_connect(node_host, node_port);
 
     if (s != NET_INVALID) {
       // Set timeout on follower socket too
@@ -83,34 +74,13 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
       if (recv_line(s, response)) {
         auto tokens = split(trim(response), ' ');
         if (tokens.size() >= 3 && tokens[0] == "REDIRECT") {
-          std::string redirect_host = tokens[1];    // e.g., "100.70.98.49" (Tailscale IP)
-          // uint16_t redirect_port = std::stoi(tokens[2]); // Remote port (7001), not used directly
+          std::string redirect_host = tokens[1];    // Tailscale IP of leader
+          uint16_t redirect_port = std::stoi(tokens[2]); // Port (7001)
           net_close(s);
 
-          // --- START OF IP TRANSLATION LOGIC ---
-          std::string verification_host;
-          uint16_t verification_port;
+          // Verify the REDIRECT target (direct connection, no translation needed)
+          sock_t verify_s = tcp_connect(redirect_host, redirect_port);
 
-          // 1. Check if the unreachable Tailscale IP is in our map.
-          auto it = TAILSCALE_TO_LOCAL_MAP.find(redirect_host);
-          if (it != TAILSCALE_TO_LOCAL_MAP.end()) {
-            // 2. Found match: Use the reachable local tunnel address.
-            std::string local_tunnel_address = it->second; // e.g., "127.0.0.1:7102"
-            
-            // Parse Host and Port from the local tunnel string for verification
-            if (!parse_host_port(local_tunnel_address, verification_host, verification_port)) {
-              continue; // Should not happen
-            }
-          } else {
-            // Fallback: This should only happen if the cluster returns an unknown IP.
-            verification_host = redirect_host;
-            verification_port = 7001; // Use default client port as a guess
-          }
-          // --- END OF IP TRANSLATION LOGIC ---
-
-          // 3. Verify the REDIRECT target using the (translated) local tunnel address
-          sock_t verify_s = tcp_connect(verification_host, verification_port);
-          
           if (verify_s != NET_INVALID) {
             // Set aggressive 300ms timeout to quickly detect dead leaders
             set_socket_timeouts(verify_s, 300);
@@ -118,18 +88,18 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
             // Send a test command to verify it responds
             send_all(verify_s, "GET __verify__\n");
             std::string verify_response;
-            
+
             if (recv_line(verify_s, verify_response)) {
               auto verify_tokens = split(trim(verify_response), ' ');
-              
+
               // Leader should respond, not timeout
               if (verify_tokens.size() > 0 &&
                   (verify_tokens[0] == "VALUE" || verify_tokens[0] == "NOT_FOUND")) {
                 net_close(verify_s);
-                
-                // Return the successful local tunnel host/port
-                out_host = verification_host;
-                out_port = verification_port;
+
+                // Return the leader's Tailscale address
+                out_host = redirect_host;
+                out_port = redirect_port;
                 return true;
               }
             }
@@ -142,13 +112,13 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
   }
 
   // Tier 2: Direct leader verification
-  // Check if the tunnel endpoint is not only open, but actually responds as a leader
-  for (const auto& local_host_port_str : CLUSTER_NODES) {
-    std::string local_host;
-    uint16_t local_port;
-    if (!parse_host_port(local_host_port_str, local_host, local_port)) continue;
+  // Check if node is not only open, but actually responds as a leader
+  for (const auto& node_host_port_str : CLUSTER_NODES) {
+    std::string node_host;
+    uint16_t node_port;
+    if (!parse_host_port(node_host_port_str, node_host, node_port)) continue;
 
-    sock_t s = tcp_connect(local_host, local_port); // Use the local tunnel port
+    sock_t s = tcp_connect(node_host, node_port); // Direct Tailscale connection
     if (s != NET_INVALID) {
       // Set aggressive 500ms timeout to quickly detect dead/unresponsive leaders
       set_socket_timeouts(s, 500);
@@ -161,8 +131,8 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
         auto tokens = split(trim(response), ' ');
         // Leader should respond with either VALUE or NOT_FOUND, not REDIRECT or ERR
         if (tokens.size() > 0 && (tokens[0] == "VALUE" || tokens[0] == "NOT_FOUND")) {
-          out_host = local_host;
-          out_port = local_port;
+          out_host = node_host;
+          out_port = node_port;
           net_close(s);
           return true;
         }
@@ -179,6 +149,36 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
 inline uint64_t get_timestamp_ms() {
   using namespace std::chrono;
   return duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+}
+
+// Helper to get target host/port based on optional nodeId parameter
+// Returns true on success, false if nodeId is invalid
+inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_port, bool requireLeader = false) {
+  if (nodeId > 0 && nodeId <= 4) {
+    // Route to specific node
+    const auto& node = CLUSTER[nodeId - 1];
+    out_host = node.host;
+    out_port = 7001;  // All nodes use port 7001 for client API
+
+    // If write operation, verify it's the leader
+    if (requireLeader) {
+      std::string leader_host;
+      uint16_t leader_port;
+      if (!discover_leader_from_cluster(leader_host, leader_port)) {
+        return false;  // Failed to discover leader
+      }
+      if (out_host != leader_host) {
+        return false;  // Specified node is not the leader
+      }
+    }
+    return true;
+  } else if (nodeId == 0) {
+    // Auto-discover leader (default behavior)
+    return discover_leader_from_cluster(out_host, out_port);
+  } else {
+    // Invalid nodeId
+    return false;
+  }
 }
 
 /**
@@ -212,19 +212,19 @@ inline auto make_routes() {
   http_api api;
 
   // Discover leader at server startup (best-effort)
-  // std::string leader_host = "100.117.80.126";  // Fallback to node1
-  std::string leader_host = "127.0.0.1";  // Fallback to node1
-
+  std::string leader_host = "100.117.80.126";  // Fallback to node1 via Tailscale
   uint16_t leader_port = 7001;
   discover_leader_from_cluster(leader_host, leader_port);
 
   auto db_client = std::make_shared<DbClient>(leader_host, leader_port);
 
-  // GET /api/keys/{{key}} - Retrieve a single key
+  // GET /api/keys/{{key}}?nodeId=N - Retrieve a single key
+  // Optional nodeId parameter allows reading from specific node (follower reads supported)
   api.get("/api/get/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = std::string());
       std::string key = params.key;
+      auto query = req.get_parameters(s::nodeId = std::optional<int>());
 
       if (key.empty()) {
         res.set_status(400);
@@ -232,7 +232,25 @@ inline auto make_routes() {
         return;
       }
 
-      auto result = db_client->get(key);
+      // Determine target node
+      int nodeId = query.nodeId.value_or(0);  // 0 = auto-discover leader
+      std::string target_host;
+      uint16_t target_port;
+
+      if (!get_target_node(nodeId, target_host, target_port, false)) {
+        res.set_status(400);
+        res.write_json(s::error = "Invalid nodeId or failed to discover leader");
+        return;
+      }
+
+      // Use per-request client if nodeId specified, otherwise use persistent connection
+      DbResponse result;
+      if (nodeId > 0) {
+        auto temp_client = std::make_shared<DbClient>(target_host, target_port);
+        result = temp_client->get(key);
+      } else {
+        result = db_client->get(key);
+      }
 
       if (result.success) {
         res.write_json(s::key = key, s::value = result.value);
@@ -249,11 +267,13 @@ inline auto make_routes() {
     }
   };
 
-  // POST /api/keys/{{key}} with JSON body {"value": "..."}
+  // POST /api/keys/{{key}}?nodeId=N with JSON body {"value": "..."}
+  // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/set/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = std::string());
       std::string key = params.key;
+      auto query = req.get_parameters(s::nodeId = std::optional<int>());
 
       if (key.empty()) {
         res.set_status(400);
@@ -270,7 +290,29 @@ inline auto make_routes() {
         return;
       }
 
-      auto result = db_client->set(key, body.value);
+      // Determine target node - SET must go to leader
+      int nodeId = query.nodeId.value_or(0);  // 0 = auto-discover leader
+      std::string target_host;
+      uint16_t target_port;
+
+      if (!get_target_node(nodeId, target_host, target_port, true)) {
+        res.set_status(400);
+        if (nodeId > 0) {
+          res.write_json(s::error = "SET operations must target the leader. Node " + std::to_string(nodeId) + " is not the leader.");
+        } else {
+          res.write_json(s::error = "Failed to discover leader");
+        }
+        return;
+      }
+
+      // Use per-request client if nodeId specified, otherwise use persistent connection
+      DbResponse result;
+      if (nodeId > 0) {
+        auto temp_client = std::make_shared<DbClient>(target_host, target_port);
+        result = temp_client->set(key, body.value);
+      } else {
+        result = db_client->set(key, body.value);
+      }
 
       if (result.success) {
         res.set_status(201);  // Created
@@ -285,11 +327,13 @@ inline auto make_routes() {
     }
   };
 
-  // DELETE /api/keys/{{key}}
+  // DELETE /api/keys/{{key}}?nodeId=N
+  // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/del/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = std::string());
       std::string key = params.key;
+      auto query = req.get_parameters(s::nodeId = std::optional<int>());
 
       if (key.empty()) {
         res.set_status(400);
@@ -297,7 +341,29 @@ inline auto make_routes() {
         return;
       }
 
-      auto result = db_client->del(key);
+      // Determine target node - DEL must go to leader
+      int nodeId = query.nodeId.value_or(0);  // 0 = auto-discover leader
+      std::string target_host;
+      uint16_t target_port;
+
+      if (!get_target_node(nodeId, target_host, target_port, true)) {
+        res.set_status(400);
+        if (nodeId > 0) {
+          res.write_json(s::error = "DELETE operations must target the leader. Node " + std::to_string(nodeId) + " is not the leader.");
+        } else {
+          res.write_json(s::error = "Failed to discover leader");
+        }
+        return;
+      }
+
+      // Use per-request client if nodeId specified, otherwise use persistent connection
+      DbResponse result;
+      if (nodeId > 0) {
+        auto temp_client = std::make_shared<DbClient>(target_host, target_port);
+        result = temp_client->del(key);
+      } else {
+        result = db_client->del(key);
+      }
 
       if (result.success) {
         res.write_json(s::key = key, s::status = "deleted");
@@ -483,6 +549,36 @@ inline auto make_routes() {
     } catch (const std::exception& e) {
       res.set_status(500);
       res.write_json(s::error = e.what());
+    }
+  };
+
+  // GET /api/cluster/nodes - List all cluster nodes with metadata
+  // Used by Vue.js UI to populate node selection dropdown
+  api.get("/api/cluster/nodes") = [](http_request& req, http_response& res) {
+    try {
+      std::ostringstream json;
+      json << "{\"nodes\":[";
+
+      for (size_t i = 0; i < sizeof(CLUSTER)/sizeof(NodeInfo); i++) {
+        const auto& node = CLUSTER[i];
+        if (i > 0) json << ",";
+
+        json << "{"
+             << "\"id\":" << node.id << ","
+             << "\"name\":\"Node " << node.id << " (" << node.host << ")\","
+             << "\"host\":\"" << node.host << "\","
+             << "\"clientPort\":7001,"
+             << "\"controlPort\":" << node.port
+             << "}";
+      }
+
+      json << "]}";
+
+      res.set_header("Content-Type", "application/json");
+      res.write(json.str());
+    } catch (const std::exception& e) {
+      res.set_status(500);
+      res.write_json(s::error = std::string("Failed to get cluster nodes: ") + e.what());
     }
   };
 

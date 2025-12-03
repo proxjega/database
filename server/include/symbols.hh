@@ -60,3 +60,8 @@
 #define LI_SYMBOL_pageNum
     LI_SYMBOL(pageNum)
 #endif
+
+#ifndef LI_SYMBOL_nodeId
+#define LI_SYMBOL_nodeId
+    LI_SYMBOL(nodeId)
+#endif

@@ -341,7 +341,7 @@ int main(int argc, char** argv) {
   }
 
   // Įprastas klientas SET/GET/DEL/GETFF/GETFB režimams
-  if (argc < 4) {
+  if (argc < 3) {
     std::cerr << "Usage:\n"
               << "  client <leader_host> <leader_client_port> GET <k>\n"
               << "  client <leader_host> <leader_client_port> SET <k> <v>\n"
@@ -350,27 +350,65 @@ int main(int argc, char** argv) {
               << "  client <leader_host> <leader_client_port> GETFB <k> [<n>]   # (default n=10)\n"
               << "  client <leader_host> <leader_client_port> GETKEYS [prefix]  # list keys with optional prefix\n"
               << "  client <leader_host> <leader_client_port> GETKEYSPAGING <pageSize> <pageNum>\n"
+              << "\n"
+              << "Node Selection (simplified):\n"
+              << "  client node1 GET <k>      # Read from Node 1 (follower reads allowed)\n"
+              << "  client node2 SET <k> <v>  # Write to Node 2 (must be leader)\n"
+              << "  client node3 DEL <k>      # Delete from Node 3 (must be leader)\n"
+              << "  client node4 GETFF <k>    # Range query from Node 4\n"
+              << "\n"
+              << "Cluster Management:\n"
               << "  client status   # show comprehensive cluster health status\n"
               << "  client leader   # alias for 'status' command\n";
     return 1;
   }
 
-  // Lyderio adresas (čia tas, į kurį visada kreipiamės SET/DEL ir baziniam GET)
-  std::string leaderHost = argv[1];
-  uint16_t leaderPort = static_cast<uint16_t>(std::stoi(argv[2]));
-  std::string command = argv[3];
+  // Parse first argument - could be node alias or host
+  std::string firstArg = argv[1];
+  std::string leaderHost;
+  uint16_t leaderPort;
+  std::string command;
+  int commandArgOffset;
+
+  // Check for node aliases (node1, node2, node3, node4)
+  if (firstArg == "node1" || firstArg == "node2" || firstArg == "node3" || firstArg == "node4") {
+    int nodeId = std::stoi(firstArg.substr(4)); // Extract number from "nodeX"
+    if (nodeId < 1 || nodeId > 4) {
+      std::cerr << "Invalid node ID. Must be node1, node2, node3, or node4\n";
+      return 1;
+    }
+
+    // Get node info from CLUSTER array
+    const auto& node = CLUSTER[nodeId - 1];
+    leaderHost = node.host;
+    leaderPort = 7001;  // All nodes use port 7001 for client API
+    command = (argc >= 3) ? argv[2] : "";
+    commandArgOffset = 3;
+
+    std::cout << "→ Connecting to Node " << nodeId << " (" << leaderHost << ":" << leaderPort << ")\n";
+  } else {
+    // Traditional host:port format
+    if (argc < 4) {
+      std::cerr << "Insufficient arguments. See usage above.\n";
+      return 1;
+    }
+    leaderHost = argv[1];
+    leaderPort = static_cast<uint16_t>(std::stoi(argv[2]));
+    command = argv[3];
+    commandArgOffset = 4;
+  }
 
   // Paprastas GET – visada per lyderį (su REDIRECT palaikymu)
-  if (command == "GET" && argc >= 5) {
+  if (command == "GET" && argc >= (commandArgOffset + 1)) {
     return do_request_follow_redirect(
              leaderHost, leaderPort,
-             "GET " + std::string(argv[4])
+             "GET " + std::string(argv[commandArgOffset])
            ) ? 0 : 1;
   }
   // SET / PUT – rašo į lyderį (užklausos forma: "SET key <value_len> value")
-  if ((command == "SET" || command == "PUT") && argc >= 6) {
-    std::string key = argv[4];
-    std::string value = argv[5];
+  if ((command == "SET" || command == "PUT") && argc >= (commandArgOffset + 2)) {
+    std::string key = argv[commandArgOffset];
+    std::string value = argv[commandArgOffset + 1];
     // Use length-prefixed format matching HTTP server implementation
     std::string setCommand = "SET " + key + " " + std::to_string(value.length()) + " " + value;
     return do_request_follow_redirect(
@@ -379,10 +417,10 @@ int main(int argc, char** argv) {
            ) ? 0 : 1;
   }
   // DEL – trina key per lyderį
-  if (command == "DEL" && argc >= 5) {
+  if (command == "DEL" && argc >= (commandArgOffset + 1)) {
     return do_request_follow_redirect(
              leaderHost, leaderPort,
-             "DEL " + std::string(argv[4])
+             "DEL " + std::string(argv[commandArgOffset])
            ) ? 0 : 1;
   }
 
@@ -456,9 +494,9 @@ int main(int argc, char** argv) {
   */
 
   // GETFF <key> <n> - Forward range query to leader
-  if (command == "GETFF" && argc >= 5) {
-    std::string key = argv[4];
-    std::string count = (argc >= 6) ? argv[5] : "10";
+  if (command == "GETFF" && argc >= (commandArgOffset + 1)) {
+    std::string key = argv[commandArgOffset];
+    std::string count = (argc >= (commandArgOffset + 2)) ? argv[commandArgOffset + 1] : "10";
 
     sock_t s = tcp_connect(leaderHost, leaderPort);
     if (s == NET_INVALID) {
@@ -478,9 +516,9 @@ int main(int argc, char** argv) {
   }
 
   // GETFB <key> <n> - Backward range query to leader
-  if (command == "GETFB" && argc >= 5) {
-    std::string key = argv[4];
-    std::string count = (argc >= 6) ? argv[5] : "10";
+  if (command == "GETFB" && argc >= (commandArgOffset + 1)) {
+    std::string key = argv[commandArgOffset];
+    std::string count = (argc >= (commandArgOffset + 2)) ? argv[commandArgOffset + 1] : "10";
 
     sock_t s = tcp_connect(leaderHost, leaderPort);
     if (s == NET_INVALID) {
@@ -516,7 +554,7 @@ int main(int argc, char** argv) {
 
   // GETKEYS [prefix] - List all keys or keys with prefix
   if (command == "GETKEYS") {
-    std::string prefix = (argc >= 5) ? argv[4] : "";
+    std::string prefix = (argc >= (commandArgOffset + 1)) ? argv[commandArgOffset] : "";
 
     sock_t s = tcp_connect(leaderHost, leaderPort);
     if (s == NET_INVALID) {
@@ -546,9 +584,9 @@ int main(int argc, char** argv) {
   }
 
   // GETKEYSPAGING <pageSize> <pageNum> - Paginated key listing
-  if (command == "GETKEYSPAGING" && argc >= 6) {
-    std::string pageSize = argv[4];
-    std::string pageNum = argv[5];
+  if (command == "GETKEYSPAGING" && argc >= (commandArgOffset + 2)) {
+    std::string pageSize = argv[commandArgOffset];
+    std::string pageNum = argv[commandArgOffset + 1];
 
     sock_t s = tcp_connect(leaderHost, leaderPort);
     if (s == NET_INVALID) {

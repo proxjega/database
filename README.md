@@ -118,13 +118,15 @@ cd Replication
 
 **Remote Setup (4 VPS nodes):**
 - Mazgai veikia nuotoliniu serveriuose su Tailscale tinklu
-- Tailscale IP adresai: 100.x.x.x (inter-node komunikacijai)
-- Fiziniai IP adresai: prieinami per SSH
+- Tailscale IP adresai: 100.x.x.x (node-to-node ir client-to-node komunikacijai)
+- Fiziniai IP adresai: prieinami per SSH deployment
 
 **Local Setup (Development Machine):**
+- Turi būti įjungtas Tailscale ir prijungtas prie to paties tinklo
 - HTTP serveris veikia lokaliai (port 8080)
-- SSH tunnels bypass Tailscale ir jungiasi prie remote mazgų
-- Tunnels: 7101-7104 (client API), 8001-8004 (control plane)
+- **Tiesioginis ryšys**: Jungiasi tiesiai per Tailscale (be SSH tunnels)
+- Client API: 100.x.x.x:7001 (per Tailscale)
+- Control plane: 100.x.x.x:8001-8004 (per Tailscale)
 
 **Konfigūracija:** Žr. [Režimas 2 konfigūraciją](#konfigūruoti-deployment-režimą)
 
@@ -175,6 +177,22 @@ const static std::unordered_map<std::string, std::string> TAILSCALE_TO_LOCAL_MAP
 
 ### Režimas 2: Remote VPS (Current Default)
 
+#### 0. Tailscale Setup (One-Time)
+**Reikalingas visiems remote mazgams ir local machine:**
+
+```bash
+# Įdiekite Tailscale (Ubuntu/Debian)
+curl -fsSL https://tailscale.com/install.sh | sh
+
+# Prisijunkite prie Tailscale tinklo
+sudo tailscale up
+
+# Patikrinkite, ar visi mazgai matomi
+tailscale status
+```
+
+Turėtumėte matyti visus 4 VPS nodes ir savo local machine.
+
 #### 1. Konfigūruoti Klasterio Mazgus
 **File:** [Replication/include/rules.hpp](Replication/include/rules.hpp)
 
@@ -192,30 +210,24 @@ static NodeInfo CLUSTER[] = {
 **File:** [server/include/routes.hpp](server/include/routes.hpp)
 
 ```cpp
-// Line ~50: CLUSTER_NODES - Points to SSH tunnel endpoints
+// Line ~50: CLUSTER_NODES - Direct Tailscale connections
 const std::vector<std::string> CLUSTER_NODES = {
-  "127.0.0.1:7101",  // Tunnel → Node 1:7001
-  "127.0.0.1:7102",  // Tunnel → Node 2:7001
-  "127.0.0.1:7103",  // Tunnel → Node 3:7001
-  "127.0.0.1:7104"   // Tunnel → Node 4:7001
+  "100.117.80.126:7001",  // Node 1 (direct Tailscale)
+  "100.70.98.49:7001",    // Node 2 (direct Tailscale)
+  "100.118.80.33:7001",   // Node 3 (direct Tailscale)
+  "100.116.151.88:7001"   // Node 4 (direct Tailscale)
 };
 
-// Line ~41: CONTROL_PLANE_TUNNEL_MAP - Maps Tailscale to tunnels
+// Line ~41: CONTROL_PLANE_TUNNEL_MAP - Direct Tailscale (no translation)
 static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
-  {"100.117.80.126:8001", "127.0.0.1:8001"},
-  {"100.70.98.49:8002",   "127.0.0.1:8002"},
-  {"100.118.80.33:8003",  "127.0.0.1:8003"},
-  {"100.116.151.88:8004", "127.0.0.1:8004"}
-};
-
-// Line ~59: TAILSCALE_TO_LOCAL_MAP - Translates REDIRECT IPs
-const static std::unordered_map<std::string, std::string> TAILSCALE_TO_LOCAL_MAP = {
-  {"100.117.80.126", "127.0.0.1:7101"},
-  {"100.70.98.49",   "127.0.0.1:7102"},
-  {"100.118.80.33",  "127.0.0.1:7103"},
-  {"100.116.151.88", "127.0.0.1:7104"}
+  {"100.117.80.126:8001", "100.117.80.126:8001"},  // Direct
+  {"100.70.98.49:8002",   "100.70.98.49:8002"},    // Direct
+  {"100.118.80.33:8003",  "100.118.80.33:8003"},   // Direct
+  {"100.116.151.88:8004", "100.116.151.88:8004"}   // Direct
 };
 ```
+
+**⚠️ PASTABA**: `server/start_tunnels.sh` yra **deprecated** ir nebereikalingas. Sistema dabar naudoja tiesioginį Tailscale ryšį.
 
 **Po konfigūracijos pakeitimo, reikia perkompiliuoti:**
 ```bash
@@ -284,33 +296,7 @@ static NodeInfo CLUSTER[] = {
 };
 ```
 
-### 4. Setup SSH Tunnels (Režimas 2)
-
-**Paleisti SSH tunnels prieš startuojant HTTP serverį:**
-
-```bash
-cd server
-./start_tunnels.sh
-```
-
-**Kas vyksta:**
-- Sukuriami SSH tunnels nuo local portų iki remote node portų
-- Client API tunnels: 7101-7104 → remote 7001
-- Control plane tunnels: 8001-8004 → remote 8001-8004
-- Naudoja `autossh` auto-reconnect funkcijai
-
-**Patikrinti tunnels:**
-```bash
-# Žiūrėti aktyvius tunnels
-ps aux | grep autossh
-
-# Testuoti client API per tunnel
-curl http://localhost:7101/api/health
-```
-
-Žr. detalesnę dokumentaciją: [server/README.md](server/README.md)
-
-### 5. Kompiliuoti ir Paleisti HTTP Serverį
+### 4. Kompiliuoti ir Paleisti HTTP Serverį
 
 ```bash
 cd server
@@ -396,51 +382,89 @@ cd btree
 
 ### CLI (Klasteris)
 
+#### **Patobulintas Node Selection Syntax** (Naujiena!)
+
 ```bash
 cd Replication
 
-# Rasti lyderį
-./client leader
+# Cluster status
+./client status  # arba ./client leader
 
-# Rašyti į lyderį
-./client 127.0.0.1 7001 SET user01 Matas
+# ✨ NAUJAS SYNTAX: Tiesiai nurodyti mazgą pagal alias
+./client node1 GET user01        # Skaityti iš Node 1 (follower reads)
+./client node2 SET user01 Matas  # Rašyti į Node 2 (turi būti leader!)
+./client node3 DEL user01        # Trinti per Node 3 (turi būti leader!)
+./client node4 GETFF user 10     # Range query iš Node 4
 
-# Skaityti iš bet kurio mazgo
-./client 127.0.0.1 7101 GET user01
+# Node aliases: node1, node2, node3, node4
+# - GET: veikia ant bet kurio mazgo (follower reads)
+# - SET/DEL: turi eiti į lyderį (automatic REDIRECT)
+```
 
-# Range užklausos
-./client 127.0.0.1 7001 GETFF user 10
-./client 127.0.0.1 7001 GETFB user99 10
+#### **Tradicinis Syntax** (tebepalaiko)
+
+```bash
+# Rasti lyderį ir naudoti IP:port
+./client leader  # Parodo kuris node yra leader
+
+# Tradicinis host:port formatas
+./client 100.70.98.49 7001 SET user01 Matas  # Direct Tailscale IP
+./client 100.70.98.49 7001 GET user01
+./client 100.70.98.49 7001 GETFF user 10
+./client 100.70.98.49 7001 GETFB user99 10
 ```
 
 ### HTTP API
 
+#### **Patobulintas API su Node Selection** (Naujiena!)
+
 ```bash
-# SET
+# ✨ NAUJAS: ?nodeId parametras leidžia pasirinkti mazgą
+
+# SET (turi eiti į lyderį)
+curl -X POST "http://localhost:8080/api/set/user01?nodeId=2" \
+  -H "Content-Type: application/json" \
+  -d '{"value":"Matas"}'
+
+# GET (gali skaityti iš bet kurio mazgo - follower reads)
+curl "http://localhost:8080/api/get/user01?nodeId=1"  # Skaityti iš Node 1
+curl "http://localhost:8080/api/get/user01?nodeId=3"  # Skaityti iš Node 3
+
+# DELETE (turi eiti į lyderį)
+curl -X POST "http://localhost:8080/api/del/user01?nodeId=2"
+
+# Range queries su node selection
+curl "http://localhost:8080/api/getff/user?count=10&nodeId=4"
+
+# Be nodeId parametro - automatic leader discovery (default)
 curl -X POST http://localhost:8080/api/set/user01 \
   -H "Content-Type: application/json" \
   -d '{"value":"Matas"}'
 
-# GET
-curl http://localhost:8080/api/get/user01
-
-# DELETE
-curl -X POST http://localhost:8080/api/del/user01
-
-# Range (forward)
-curl "http://localhost:8080/api/getff/user?count=10"
-
-# Leader info
-curl http://localhost:8080/api/leader
+# Cluster info
+curl http://localhost:8080/api/cluster/nodes    # Gauti visus mazgus
+curl http://localhost:8080/api/cluster/status   # Klasterio būsena
 ```
 
-### Web GUI
+**Node Selection Logika:**
+- **GET operacijos**: Veikia ant bet kurio mazgo (eventually consistent reads)
+- **SET/DEL operacijos**: Turi eiti į lyderį (gražina klaidą jei ne leader)
+- **Default (be nodeId)**: Automatinis leader discovery
+
+#### **Web GUI** (Naujiena! Node Selector)
 
 1. Atidaryti naršyklę: http://localhost:8080
-2. Naudoti web sąsają:
+2. **Node Selection Dropdown**:
+   - Auto (Leader Discovery) - numatytasis
+   - Node 1 (100.117.80.126)
+   - Node 2 (100.70.98.49)
+   - Node 3 (100.118.80.33)
+   - Node 4 (100.116.151.88)
+3. Funkcijos:
    - **CRUD** - Kurti/skaityti/atnaujinti/trinti
    - **Browse** - Naršyti su puslapiavimų
    - **Cluster** - Klasterio būsena
+   - **Node Selector** - Pasirinkti konkretų mazgą operacijoms
 
 ## Testuojimo Scenarijai
 

@@ -46,7 +46,7 @@ ssh_exec "killall -9 run leader follower 2>/dev/null || true; sleep 1" || true
 
 # 2. Clean old data
 echo "[2/7] Cleaning old data..."
-ssh_exec "cd $REPO_PATH/Replication && rm -rf data_node* *.log node*.out node*.pid build.log 2>/dev/null" || true
+ssh_exec "cd $REPO_PATH/Replication && rm -rf data node*.out node*.pid build.log 2>/dev/null" || true
 
 # 3. Pull latest code
 echo "[3/7] Pulling latest code from git..."

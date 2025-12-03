@@ -4,6 +4,9 @@
       <h1 class="display-5">Paskirstyta Raktų-Reikšmių Duomenų Bazė</h1>
     </div>
 
+    <!-- NEW: Node Selector -->
+    <node-selector @node-changed="onNodeChanged" />
+
     <!-- Error/Success Messages -->
     <div v-if="message" class="alert alert-success alert-dismissible fade show" role="alert">
       {{ message }}
@@ -154,7 +157,7 @@
       <div class="col-md-12">
         <div class="card">
           <div class="card-header bg-secondary text-white">
-            <h5 class="mb-0">Gauti Raktus su Puslapiuotumu</h5>
+            <h5 class="mb-0">Gauti Raktus su Puslapiavimu</h5>
           </div>
           <div class="card-body">
             <form @submit.prevent="handleGetKeysPaging">
@@ -381,9 +384,13 @@
 
 <script>
 import api from "@/services/api";
+import NodeSelector from "@/components/NodeSelector.vue";
 
 export default {
   name: "Home",
+  components: {
+    NodeSelector
+  },
   data() {
     return {
       // GET single value
@@ -656,6 +663,19 @@ export default {
         this.error = err.response?.data?.error || err.message;
       }
     },
+
+    onNodeChanged(nodeId) {
+      this.message = nodeId
+        ? `Switched to Node ${nodeId}`
+        : 'Switched to Auto (Leader Discovery)';
+
+      // Clear previous results to avoid confusion
+      this.retrievedValue = null;
+      this.prefixResults = null;
+      this.pagingResults = null;
+      this.getffResults = null;
+      this.getfbResults = null;
+    }
   },
 };
 </script>
