@@ -2,14 +2,13 @@
 # deploy.sh - Deploy cluster node to remote server
 # Usage: ./deploy.sh <node_number>
 # Example: ./deploy.sh 1
-# Note: Requires SSH key-based authentication (see SSH_SETUP.md)
 
 NODE_ID=$1
 
-# Server configuration arrays (no passwords stored!)
+# Server configuration arrays
 PHYSICAL_IPS=("207.180.251.206" "167.86.66.60" "167.86.83.198" "167.86.81.251")
 TAILSCALE_IPS=("100.117.80.126" "100.70.98.49" "100.118.80.33" "100.116.151.88")
-SSH_HOSTS=("cluster-node1" "cluster-node2" "cluster-node3" "cluster-node4")
+SSH_USERS=("Anthony" "Austin" "Edward" "Anthony")
 REPO_PATH="database"  # Relative to remote user's home directory
 
 # Validate node ID
@@ -22,23 +21,23 @@ fi
 IDX=$((NODE_ID-1))
 PHYSICAL_IP="${PHYSICAL_IPS[$IDX]}"
 TAILSCALE_IP="${TAILSCALE_IPS[$IDX]}"
-SSH_HOST="${SSH_HOSTS[$IDX]}"
+SSH_USER="${SSH_USERS[$IDX]}"
 
 echo "========================================"
 echo "Deploying Node $NODE_ID"
 echo "Physical IP:  $PHYSICAL_IP"
 echo "Tailscale IP: $TAILSCALE_IP"
-echo "SSH Host:     $SSH_HOST"
+echo "SSH User:     $SSH_USER"
 echo "========================================"
 
 # Helper function for SSH (non-backgrounding; use for commands where you need status)
 ssh_exec() {
-    ssh "$SSH_HOST" "$1"
+    ssh "$SSH_USER@$PHYSICAL_IP" "$1"
 }
 
 # Helper function for SSH that disables tty and local stdin (use for fire-and-forget)
 ssh_exec_nontty() {
-    ssh -n -T "$SSH_HOST" "$1"
+    ssh -n -T "$SSH_USER@$PHYSICAL_IP" "$1"
 }
 
 # 1. Stop existing processes
@@ -69,11 +68,11 @@ if [ $BUILD_EXIT -ne 0 ]; then
 fi
 
 # Optionally detect warnings/errors and notify user (without printing full tail)
-# If you want to see the warnings, run: ssh $SSH_HOST 'tail -n 200 $REPO_PATH/Replication/build.log'
-HAS_ISSUES=$(ssh "$SSH_HOST" "grep -E -i 'warning:|error:' $REPO_PATH/Replication/build.log >/dev/null; echo \$?")
+# If you want to see the warnings, run: ssh $SSH_USER@$PHYSICAL_IP 'tail -n 200 $REPO_PATH/Replication/build.log'
+HAS_ISSUES=$(ssh "$SSH_USER@$PHYSICAL_IP" "grep -E -i 'warning:|error:' $REPO_PATH/Replication/build.log >/dev/null; echo \$?")
 if [ "$HAS_ISSUES" -eq 0 ]; then
     echo "Build completed with warnings or errors present in build.log (warnings suppressed)."
-    echo "To inspect them: ssh $SSH_HOST 'tail -n 200 $REPO_PATH/Replication/build.log'"
+    echo "To inspect them: ssh $SSH_USER@$PHYSICAL_IP 'tail -n 200 $REPO_PATH/Replication/build.log'"
 else
     echo "Build successful."
 fi
@@ -97,7 +96,7 @@ sleep 1
 # Corrected if/else without syntax errors
 ssh_exec_nontty "cd $REPO_PATH/Replication && if [ -f node${NODE_ID}.pid ]; then printf 'Started: PID=' && cat node${NODE_ID}.pid; else pgrep -af run || echo 'No PID file and no process found'; fi"
 
-echo "  Check logs with: ssh $SSH_HOST 'tail -f $REPO_PATH/Replication/node${NODE_ID}.out'"
+echo "  Check logs with: ssh $SSH_USER@$PHYSICAL_IP 'tail -f $REPO_PATH/Replication/node${NODE_ID}.out'"
 echo "========================================"
 echo "Deployment complete for Node $NODE_ID"
 echo "========================================"
