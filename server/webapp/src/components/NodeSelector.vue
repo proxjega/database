@@ -12,20 +12,17 @@
             @change="onNodeChange"
             class="form-select"
           >
-            <!-- Requirement #2: Default to leader discovery -->
-            <option :value="null">
-              Auto (Leader Discovery)
-            </option>
+            <!-- Default to leader node -->
             <option
               v-for="node in nodes"
               :key="node.id"
               :value="node.id"
               :disabled="!isNodeAvailable(node.id)"
             >
-              <!-- Requirement #3: Show "Node # (IP)" format -->
+              <!-- Show "Node # (IP)" format with leader badge -->
               {{ node.name }}
               <span v-if="!isNodeAvailable(node.id)"> - OFFLINE</span>
-              <span v-if="node.id === leaderId"> LEADER</span>
+              <span v-if="node.id === leaderId"> ⭐ LEADER</span>
             </option>
           </select>
         </div>
@@ -52,7 +49,7 @@ export default {
   name: 'NodeSelector',
   data() {
     return {
-      selectedNodeId: null,
+      selectedNodeId: 0,  // Will be updated to leader ID on mount
       nodes: [],
       clusterStatus: null,
       leaderId: null
@@ -66,6 +63,13 @@ export default {
   async mounted() {
     await this.loadNodes();
     await this.loadClusterStatus();
+
+    // Auto-select leader on initial load
+    if (this.leaderId && this.selectedNodeId === 0) {
+      this.selectedNodeId = this.leaderId;
+      api.selectNode(this.leaderId);
+      this.$emit('node-changed', this.leaderId);
+    }
 
     // Refresh cluster status every 5 seconds
     setInterval(() => this.loadClusterStatus(), 5000);
@@ -83,7 +87,22 @@ export default {
       try {
         this.clusterStatus = await api.getClusterStatus();
         const leaderNode = this.clusterStatus.nodes.find(n => n.role === 'LEADER');
-        this.leaderId = leaderNode?.id;
+        const newLeaderId = leaderNode?.id;
+
+        // If leader changed, update selection
+        if (newLeaderId && newLeaderId !== this.leaderId) {
+          console.log(`Leader changed: ${this.leaderId} -> ${newLeaderId}`);
+          this.leaderId = newLeaderId;
+
+          // If currently selected node is no longer leader or was default, switch to new leader
+          if (this.selectedNodeId === this.leaderId || this.selectedNodeId === 0) {
+            this.selectedNodeId = newLeaderId;
+            api.selectNode(newLeaderId);
+            this.$emit('node-changed', newLeaderId);
+          }
+        } else if (newLeaderId) {
+          this.leaderId = newLeaderId;
+        }
       } catch (err) {
         console.error('Failed to load cluster status:', err);
       }

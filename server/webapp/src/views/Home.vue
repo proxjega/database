@@ -665,9 +665,7 @@ export default {
     },
 
     onNodeChanged(nodeId) {
-      this.message = nodeId
-        ? `Switched to Node ${nodeId}`
-        : 'Switched to Auto (Leader Discovery)';
+      this.message = `Connected to Node ${nodeId}`;
 
       // Clear previous results to avoid confusion
       this.retrievedValue = null;

@@ -16,7 +16,8 @@ Leader::Leader(string dbName, uint16_t clientPort, uint16_t followerPort, int re
       log_line(LogLevel::INFO, "[Leader] Starting on " + this->host +
              " ClientPort:" + std::to_string(this->clientPort) +
              " ReplPort:" + std::to_string(this->followerPort) +
-             " DB:" + this->dbName + " ACKS:" + std::to_string(this->requiredAcks));
+             " DB:" + this->dbName + " ACKS:" + std::to_string(this->requiredAcks) +
+             " (quorum enforcement: requires " + std::to_string(this->requiredAcks + 1) + "+ nodes)");
 
     this->duombaze = std::make_unique<Database>(this->dbName);
 }
@@ -352,6 +353,14 @@ void Leader::ServeClients() {
 }
 
 void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
+  // Check quorum before accepting write operations
+  if (!HasQuorum()) {
+    send_all(clientSocket, "ERR_NO_QUORUM Insufficient nodes for write operation (need 3+ nodes)\n");
+    log_line(LogLevel::WARN, "Rejected SET operation: no quorum (alive followers: " +
+             std::to_string(CountAliveFollowers()) + ")");
+    return;
+  }
+
   auto key = string(tokens[1]);
   string value;
 
@@ -377,6 +386,14 @@ void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
 }
 
 void Leader::HandleDel(sock_t clientSocket, const vector<string> &tokens) {
+  // Check quorum before accepting write operations
+  if (!HasQuorum()) {
+    send_all(clientSocket, "ERR_NO_QUORUM Insufficient nodes for delete operation (need 3+ nodes)\n");
+    log_line(LogLevel::WARN, "Rejected DEL operation: no quorum (alive followers: " +
+             std::to_string(CountAliveFollowers()) + ")");
+    return;
+  }
+
   WalRecord walRecord(0, WalOperation::DELETE, tokens[1]);
 
   auto newLsn = this->duombaze->ExecuteLogDeleteWithLSN(walRecord.key);
@@ -494,6 +511,30 @@ bool Leader::IsClusterHealthy() {
   }
 
   return activeFollowers >= requiredFollowers;
+}
+
+int Leader::CountAliveFollowers() {
+    std::lock_guard<mutex> lock(this->mtx);
+    int count = 0;
+    uint64_t currentTime = now_ms();
+
+    for (const auto& follower : this->followers) {
+        // Count follower as alive if:
+        // 1. Currently connected (isAlive = true), OR
+        // 2. Recently seen (within cache window)
+        bool recentlySeen = (currentTime - follower->lastSeenMs) < FOLLOWER_STATUS_CACHE_MS;
+        if (follower->isAlive || recentlySeen) {
+            count++;
+        }
+    }
+
+    return count;
+}
+
+bool Leader::HasQuorum() {
+    // Quorum requires >= 3 nodes total (leader + 2 followers)
+    // So we need at least 2 alive followers
+    return CountAliveFollowers() >= 2;
 }
 
 void Leader::BroadcastReset() {

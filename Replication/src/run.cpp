@@ -713,18 +713,22 @@ static void role_process_manager() {
       // - arba child'as numirė
       if (last_role != NodeState::LEADER || !child_alive(g_child)) {
         stop_process(g_child);
+        // Require majority acknowledgments for write operations (quorum enforcement)
+        const int requiredAcks = (CLUSTER_N / 2);  // 2 for 4-node cluster
 #ifdef _WIN32
         std::string cmd = ".\\leader.exe " +
                           std::to_string(CLIENT_PORT) + " " +
                           std::to_string(REPL_PORT)   + " " +
-                          dbName + " 1"+
-                      g_self_info.host;
+                          dbName + " " +
+                          std::to_string(requiredAcks) + " " +
+                          g_self_info.host;
 #else
         // Linux/macOS komanda leader binarui paleisti
         std::string cmd = "./leader " +
                           std::to_string(CLIENT_PORT) + " " +
                           std::to_string(REPL_PORT)   + " " +
-                          dbName + " 1 " +
+                          dbName + " " +
+                          std::to_string(requiredAcks) + " " +
                           g_self_info.host;
 #endif
         run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,

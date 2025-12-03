@@ -87,6 +87,10 @@ private:
     // "Stabdome pasaulį" logika.
     void AutoCompactLoop();
     bool IsClusterHealthy();
+
+    // Quorum checks for distributed consensus
+    int CountAliveFollowers();
+    bool HasQuorum();  // Returns true if >= 2 followers alive (3+ total nodes)
     void HandleCompact(sock_t clientSocket);
     bool PerformCompaction(string &statusMsg);
     void BroadcastReset();

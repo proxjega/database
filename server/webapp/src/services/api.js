@@ -8,7 +8,7 @@ class DatabaseAPI {
     this.leaderDiscoveryCache = null;
     this.leaderDiscoveryCacheTime = 0;
     this.CACHE_TTL = 5000; // 5 seconds
-    this.selectedNodeId = null; // null = auto (leader discovery)
+    this.selectedNodeId = 0;  // Will be set to leader ID on first use
     this.availableNodes = [];
   }
 
