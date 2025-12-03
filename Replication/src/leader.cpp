@@ -536,18 +536,14 @@ bool Leader::IsClusterHealthy() {
 int Leader::CountAliveFollowers() {
     std::lock_guard<mutex> lock(this->mtx);
     int count = 0;
-    uint64_t currentTime = now_ms();
-
-    // Use aggressive 2-second timeout for quorum checks (safety-critical)
-    // This is much shorter than FOLLOWER_STATUS_CACHE_MS (used for UI status)
-    static constexpr uint64_t QUORUM_TIMEOUT_MS = 2000;
 
     for (const auto& follower : this->followers) {
-        // Count follower as alive if:
-        // 1. Connection is marked alive AND has communicated recently
-        // 2. This aggressive timeout ensures dead followers are detected quickly
-        bool recentlySeen = (currentTime - follower->lastSeenMs) < QUORUM_TIMEOUT_MS;
-        if (follower->isAlive && recentlySeen) {
+        // Count follower as alive based on connection status
+        // The isAlive flag is actively maintained by the follower thread:
+        // - Set to true when follower connects (HandleFollowerConnection)
+        // - Set to false when recv_line fails (connection drops)
+        // This is more reliable than time-based checks when there are no writes
+        if (follower->isAlive) {
             count++;
         }
     }
