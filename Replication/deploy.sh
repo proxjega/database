@@ -2,14 +2,14 @@
 # deploy.sh - Deploy cluster node to remote server
 # Usage: ./deploy.sh <node_number>
 # Example: ./deploy.sh 1
-# Note: Requires SSH key-based authentication
+# Note: Requires SSH key-based authentication (see SSH_SETUP.md)
 
 NODE_ID=$1
 
-# Server configuration arrays
+# Server configuration arrays (no passwords stored!)
 PHYSICAL_IPS=("207.180.251.206" "167.86.66.60" "167.86.83.198" "167.86.81.251")
 TAILSCALE_IPS=("100.117.80.126" "100.70.98.49" "100.118.80.33" "100.116.151.88")
-SSH_HOSTS=("cluster-node1" "cluster-node2" "cluster-node3" "cluster-node1")
+SSH_HOSTS=("cluster-node1" "cluster-node2" "cluster-node3" "cluster-node4")
 REPO_PATH="database"  # Relative to remote user's home directory
 
 # Validate node ID
@@ -23,7 +23,6 @@ IDX=$((NODE_ID-1))
 PHYSICAL_IP="${PHYSICAL_IPS[$IDX]}"
 TAILSCALE_IP="${TAILSCALE_IPS[$IDX]}"
 SSH_HOST="${SSH_HOSTS[$IDX]}"
-# Removed
 
 echo "========================================"
 echo "Deploying Node $NODE_ID"

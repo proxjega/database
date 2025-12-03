@@ -233,7 +233,65 @@ make all
 ./build/main  # CLI interaktyvus režimas
 ```
 
-### 2. Deploy Remote Cluster (Režimas 2)
+### 2. SSH Key Setup (Režimas 2 - Pirmas Kartas)
+
+**Prieš deployment, sukonfigūruoti SSH key autentifikaciją:**
+
+```bash
+# 1. Generuoti SSH key
+ssh-keygen -t ed25519 -f ~/.ssh/cluster_deploy -C "cluster-deployment"
+
+# 2. Kopijuoti public key į kiekvieną serverį (naudoti esamus passwords paskutinį kartą)
+ssh-copy-id -i ~/.ssh/cluster_deploy.pub Anthony@207.180.251.206  # Node 1
+ssh-copy-id -i ~/.ssh/cluster_deploy.pub Austin@167.86.66.60      # Node 2
+ssh-copy-id -i ~/.ssh/cluster_deploy.pub Edward@167.86.83.198     # Node 3
+ssh-copy-id -i ~/.ssh/cluster_deploy.pub Anthony@167.86.81.251    # Node 4
+
+# 3. Sukonfigūruoti ~/.ssh/config
+cat >> ~/.ssh/config << 'EOF'
+Host cluster-node1
+    HostName 207.180.251.206
+    User Anthony
+    IdentityFile ~/.ssh/cluster_deploy
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+
+Host cluster-node2
+    HostName 167.86.66.60
+    User Austin
+    IdentityFile ~/.ssh/cluster_deploy
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+
+Host cluster-node3
+    HostName 167.86.83.198
+    User Edward
+    IdentityFile ~/.ssh/cluster_deploy
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+
+Host cluster-node4
+    HostName 167.86.81.251
+    User Anthony
+    IdentityFile ~/.ssh/cluster_deploy
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+EOF
+
+# 4. Nustatyti permissions
+chmod 600 ~/.ssh/config ~/.ssh/cluster_deploy
+chmod 644 ~/.ssh/cluster_deploy.pub
+
+# 5. Testuoti prisijungimus (neturėtų prašyti password)
+ssh cluster-node1 'echo "Node 1 OK"'
+ssh cluster-node2 'echo "Node 2 OK"'
+ssh cluster-node3 'echo "Node 3 OK"'
+ssh cluster-node4 'echo "Node 4 OK"'
+```
+
+**Pastaba:** Deployment ir tunnel scripts naudoja SSH key autentifikaciją - neturi hardcoded passwords.
+
+### 3. Deploy Remote Cluster (Režimas 2)
 
 ```bash
 cd Replication
@@ -244,7 +302,7 @@ cd Replication
 
 **Deploy script automatiškai:**
 - Kompiliuoja lokaliai (`make all`)
-- Upload binaries per SSH
+- Upload binaries per SSH (key-based auth)
 - Sustabdo senus procesus
 - Paleidžia naujus procesus
 - Raft election vyksta automatiškai (~3 sek)
@@ -260,16 +318,33 @@ static NodeInfo CLUSTER[] = {
 };
 ```
 
-### 3. Setup SSH Tunnels (Režimas 2)
+### 4. Setup SSH Tunnels (Režimas 2)
+
+**Paleisti SSH tunnels prieš startuojant HTTP serverį:**
 
 ```bash
 cd server
 ./start_tunnels.sh
 ```
 
+**Kas vyksta:**
+- Sukuriami SSH tunnels nuo local portų iki remote node portų
+- Client API tunnels: 7101-7104 → remote 7001
+- Control plane tunnels: 8001-8004 → remote 8001-8004
+- Naudoja `autossh` auto-reconnect funkcijai
+
+**Patikrinti tunnels:**
+```bash
+# Žiūrėti aktyvius tunnels
+ps aux | grep autossh
+
+# Testuoti client API per tunnel
+curl http://localhost:7101/api/health
+```
+
 Žr. detalesnę dokumentaciją: [server/README.md](server/README.md)
 
-### 4. Kompiliuoti ir Paleisti HTTP Serverį
+### 5. Kompiliuoti ir Paleisti HTTP Serverį
 
 ```bash
 cd server
