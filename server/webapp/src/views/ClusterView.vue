@@ -113,9 +113,19 @@
                 <p class="mb-1"><strong>Legenda:</strong></p>
                 <ul class="mb-0">
                   <li><strong>LSN:</strong> Log Sequence Number (replikacijos sekos numeris)</li>
-                  <li><strong>Term:</strong> Rinkimų kadencijos numeris</li>
-                  <li><strong>HB:</strong> Heartbeat (širdies plakimo amžius sekundėmis)</li>
-                  <li><strong>Sekėjai:</strong> Follower statusai matomi tik lyderio eilutėje</li>
+                  <li><strong>Term:</strong> Rinkimų kadencijos numeris (aukštesnis = naujesnis)</li>
+                  <li><strong>Rolės:</strong></li>
+                  <ul>
+                    <li><span class="badge bg-success">Lyderis</span> - Aktyvus lyderis, priima rašymo operacijas</li>
+                    <li><span class="badge bg-primary">Sekėjas</span> - Replikuoja duomenis iš lyderio</li>
+                    <li><span class="badge bg-warning text-dark">Kandidatas</span> - Vyksta rinkimai, mazgas bando tapti lyderiu</li>
+                    <li><span class="badge bg-secondary">Nežinoma</span> - Mazgas nepasiekiamas arba neatsakė į CLUSTER_STATUS užklausą</li>
+                  </ul>
+                  <li><strong>Būsenos:</strong></li>
+                  <ul>
+                    <li><span class="badge bg-success">Veikia</span> - Mazgas pasiekiamas per SSH tunnelį</li>
+                    <li><span class="badge bg-danger">Nepasiekiamas</span> - Mazgas nepasiekiamas (tunnel/remote procesas neveikia)</li>
+                  </ul>
                 </ul>
               </div>
             </div>

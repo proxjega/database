@@ -36,6 +36,15 @@ static inline bool parse_host_port(const std::string& host_port, std::string& ho
   }
 }
 
+// CONTROL_PLANE_TUNNEL_MAP: Maps Tailscale control plane addresses to local tunnel endpoints
+// Used by cluster/status to query node status via SSH tunnels
+static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
+  {"100.117.80.126:8001", "127.0.0.1:8001"}, // Node 1 control plane
+  {"100.70.98.49:8002",   "127.0.0.1:8002"}, // Node 2 control plane
+  {"100.118.80.33:8003",  "127.0.0.1:8003"}, // Node 3 control plane
+  {"100.116.151.88:8004", "127.0.0.1:8004"}  // Node 4 control plane
+};
+
 inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_port) {
   // CLUSTER_NODES: Local tunnel endpoints (127.0.0.1:710x) mapped to remote CLIENT_PORT (7001).
   const std::vector<std::string> CLUSTER_NODES = {
@@ -45,7 +54,7 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
     "127.0.0.1:7104"
   };
 
-  // TAILSCALE_TO_LOCAL_MAP: Maps the unreachable internal cluster IP (Tailscale) 
+  // TAILSCALE_TO_LOCAL_MAP: Maps the unreachable internal cluster IP (Tailscale)
   // back to the reachable local tunnel IP:Port.
   const static std::unordered_map<std::string, std::string> TAILSCALE_TO_LOCAL_MAP = {
     {"100.117.80.126", "127.0.0.1:7101"}, // Node 1
@@ -519,8 +528,18 @@ inline auto make_routes() {
         json << "\"host\":\"" << node.host << "\",";
         json << "\"port\":" << node.port << ",";
 
-        // Query control plane
-        sock_t s = tcp_connect(node.host, node.port);
+        // Query control plane - use tunnel if available
+        std::string controlKey = std::string(node.host) + ":" + std::to_string(node.port);
+        std::string connectHost = node.host;
+        uint16_t connectPort = node.port;
+
+        auto it = CONTROL_PLANE_TUNNEL_MAP.find(controlKey);
+        if (it != CONTROL_PLANE_TUNNEL_MAP.end()) {
+          // Use local tunnel endpoint
+          parse_host_port(it->second, connectHost, connectPort);
+        }
+
+        sock_t s = tcp_connect(connectHost, connectPort);
         if (s == NET_INVALID) {
           json << "\"status\":\"OFFLINE\",\"role\":\"UNREACHABLE\"";
           json << "}";
