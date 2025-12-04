@@ -55,6 +55,8 @@ private:
     void HandleClient(sock_t clientSocket);
     void HandleGet(sock_t sock, const string &key);
     void HandleRangeQuery(sock_t sock, const vector<string> &tokens, bool forward);
+    void HandleGetKeys(sock_t sock, const vector<string> &tokens);
+    void HandleGetKeysPaging(sock_t sock, const vector<string> &tokens);
     void HandleRedirect(sock_t sock);
 
     // Reset'inimas.

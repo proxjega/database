@@ -318,6 +318,50 @@ void Follower::HandleRangeQuery(sock_t sock, const vector<string> &tokens, bool 
     }
 }
 
+void Follower::HandleGetKeys(sock_t sock, const vector<string> &tokens) {
+    try {
+        // GETKEYS [prefix]
+        // If no prefix provided (tokens.size() == 1), get all keys
+        // If prefix provided (tokens.size() >= 2), get keys with that prefix
+        string prefix = (tokens.size() >= 2) ? tokens[1] : "";
+
+        vector<string> keys;
+        if (prefix.empty()) {
+            keys = this->duombaze->GetKeys();
+        } else {
+            keys = this->duombaze->GetKeys(prefix);
+        }
+
+        for (const auto& key : keys) {
+            send_all(sock, "KEY " + key + "\n");
+        }
+        send_all(sock, "END\n");
+    } catch (const std::exception& e) {
+        send_all(sock, "ERR " + std::string(e.what()) + "\n");
+    }
+}
+
+void Follower::HandleGetKeysPaging(sock_t sock, const vector<string> &tokens) {
+    try {
+        // GETKEYSPAGING <pageSize> <pageNum>
+        auto pageSize = std::stoul(tokens[1]);
+        auto pageNum = std::stoul(tokens[2]);
+
+        auto result = this->duombaze->GetKeysPaging(pageSize, pageNum);
+
+        // Send total count first
+        send_all(sock, "TOTAL " + std::to_string(result.totalItems) + "\n");
+
+        // Send each key
+        for (const auto& key : result.keys) {
+            send_all(sock, "KEY " + key + "\n");
+        }
+        send_all(sock, "END\n");
+    } catch (const std::exception& e) {
+        send_all(sock, "ERR " + std::string(e.what()) + "\n");
+    }
+}
+
 void Follower::HandleRedirect(sock_t sock) {
     send_all(sock, "REDIRECT " + this->leaderHost + " " + std::to_string(CLIENT_PORT) + "\n");
 }
@@ -342,9 +386,15 @@ void Follower::HandleClient(sock_t clientSocket) {
             else if (command == "GETFB" && tokens.size() >= 3) {
                 HandleRangeQuery(clientSocket, tokens, false);
             }
+            else if (command == "GETKEYS" && tokens.size() >= 1) {
+                HandleGetKeys(clientSocket, tokens);
+            }
+            else if (command == "GETKEYSPAGING" && tokens.size() == 3) {
+                HandleGetKeysPaging(clientSocket, tokens);
+            }
             else {
                 // Reject all write operations (SET, PUT, DEL) and unsupported commands
-                // Followers are read-only and only support: GET, GETFF, GETFB
+                // Followers are read-only and support: GET, GETFF, GETFB, GETKEYS, GETKEYSPAGING
                 send_all(clientSocket, "ERR_READ_ONLY\n");
             }
         }
