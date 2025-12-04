@@ -329,6 +329,8 @@ static void handle_conn(sock_t client_socket) {
         if (g_cluster_state.state != NodeState::FOLLOWER) {
           g_cluster_state.state = NodeState::FOLLOWER;
         }
+
+        g_last_heartbeat_ms = now_ms();
       }
 
       // Balsavimo logika: balsuojam jei:
@@ -523,9 +525,15 @@ static void leader_heartbeat() {
 // 4) Laukia balsų arba timeout'o
 // -------- Elections: tikra dauguma iš VISŲ mazgų --------
 static void start_election() {
+  auto lastLeaderHeartbeat = g_last_heartbeat_ms.load();
+  if (now_ms() - lastLeaderHeartbeat < ELECTION_TIMEOUT_MS) {
+    return;
+  }
+
   bool expected = false;
-  if (!g_election_inflight.compare_exchange_strong(expected, true))
+  if (!g_election_inflight.compare_exchange_strong(expected, true)) {
     return; // jau vyksta rinkimai
+  }
 
   int new_term = g_current_term.load() + 1;
   g_current_term  = new_term;
@@ -538,7 +546,7 @@ static void start_election() {
   g_votes_received = 1;
 
   const int total_nodes   = CLUSTER_N;
-  const int requiredVotes = total_nodes / 2 + 1;   // tikra dauguma iš VISŲ
+  const int requiredVotes = (total_nodes / 2) + 1;   // tikra dauguma iš VISŲ
 
   run_log(
     g_cluster_state,

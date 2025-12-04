@@ -1332,6 +1332,12 @@ void Database::Optimize(){
         std::cerr << "Error: " << e.what() << '\n';
     }
 
+    // Read the old LSN from metapagehaeder.
+    uint64_t oldLSN = this->getLSN();
+
+    // Write the old LSN to the new Optimized Database metapgehaeder.
+    OptimizedDb.writeLSN(oldLSN);
+
     // rename new database file and delete the old one
     try {
         std::filesystem::rename(this->pathToDatabaseFile, this->name + "Old.db");
