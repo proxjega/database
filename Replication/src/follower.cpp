@@ -179,6 +179,17 @@ bool Follower::ProcessCommandLine(const string &line, uint64_t &myLsn) {
         return true;
     }
 
+    uint64_t incomingLsn = 0;
+    bool hasLsn = false;
+    if (tokens.size() >= 2) {
+        try {
+            incomingLsn = std::stoull(tokens[1]);
+            hasLsn = true;
+        } catch (...) {
+            hasLsn = false;
+        }
+    }
+
     try {
         string &command = tokens[0];
         bool success = false;
@@ -198,6 +209,14 @@ bool Follower::ProcessCommandLine(const string &line, uint64_t &myLsn) {
         return true;
     } catch (const std::length_error& ex) {
         FollowerLog(LogLevel::WARN, "Data exceeds limit (" + std::to_string(Database::MAX_VALUE_LENGTH) + " bytes). Reconnecting to flush stream.");
+
+        // Žinome, kad blogas value, todėl apsimetame, kad įrašėmę.
+        if (hasLsn && incomingLsn > myLsn) {
+            FollowerLog(LogLevel::ERROR, "Forcefully advancing LSN from " +
+                        std::to_string(myLsn) + " to " + std::to_string(incomingLsn));
+            myLsn = incomingLsn;
+        }
+
         throw;
     } catch (const std::exception& ex) {
         FollowerLog(LogLevel::ERROR, string("exception in replication loop: ") + ex.what());
