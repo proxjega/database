@@ -424,8 +424,13 @@ inline auto make_routes() {
         return;
       }
 
-      auto temp_client = std::make_shared<DbClient>(targetHost, targetPort);
-      auto result = temp_client->getff(key, count);
+      DbResponse result;
+      if (nodeId > 0) {
+        auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
+        result = tempDBClient->getff(key, count);
+      } else {
+        auto result = db_client->getff(key, count);
+      }
 
       if (result.success) {
         // Build JSON array manually since Lithium's write_json doesn't support complex structures easily
@@ -457,7 +462,7 @@ inline auto make_routes() {
     try {
       auto params = req.url_parameters(s::key = std::string());
       std::string key = params.key;
-      auto query = req.get_parameters(s::count = std::optional<int>());
+      auto query = req.get_parameters(s::count = std::optional<int>(), s::nodeId = std::optional<int>());
 
       if (key.empty()) {
         res.set_status(400);
@@ -466,8 +471,24 @@ inline auto make_routes() {
       }
 
       uint32_t count = query.count.value_or(10);
+      int nodeId = query.nodeId.value_or(0);
 
-      auto result = db_client->getfb(key, count);
+      std::string targetHost;
+      uint16_t targetPort;
+
+      if (!get_target_node(nodeId, targetHost, targetPort, false)) {
+        res.set_status(500);
+        res.write_json(s::error = "Failed to discover database leader");
+        return;
+      }
+
+      DbResponse result;
+      if (nodeId > 0) {
+        auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
+        result = tempDBClient->getfb(key, count);
+      } else {
+        auto result = db_client->getfb(key, count);
+      }
 
       if (result.success) {
         // Build JSON array manually
@@ -497,7 +518,25 @@ inline auto make_routes() {
   // POST /api/optimize - Rebuild database, removing deleted entries
   api.post("/api/optimize") = [db_client](http_request& req, http_response& res) {
     try {
-      auto result = db_client->optimize();
+      auto query = req.get_parameters(s::nodeId = std::optional<int>());
+      int nodeId = query.nodeId.value_or(0);
+
+      std::string targetHost;
+      uint16_t targetPort;
+
+      if (!get_target_node(nodeId, targetHost, targetPort, false)) {
+        res.set_status(500);
+        res.write_json(s::error = "Failed to discover database leader");
+        return;
+      }
+
+      DbResponse result;
+      if (nodeId > 0) {
+        auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
+        result = tempDBClient->optimize();
+      } else {
+        auto result = db_client->optimize();
+      }
 
       if (result.success) {
         res.write_json(s::status = "optimized");
@@ -510,7 +549,7 @@ inline auto make_routes() {
       res.write_json(s::error = std::string("Internal error: ") + e.what());
     }
   };
-  
+
   // Test simple parameterized route
   api.get("/test/{{name}}") = [](http_request& req, http_response& res) {
     auto params = req.url_parameters(s::name = std::string());
@@ -522,8 +561,26 @@ inline auto make_routes() {
     try {
       auto params = req.url_parameters(s::prefix = std::string());
       std::string prefix = params.prefix;
+      auto query = req.get_parameters(s::nodeId = std::optional<int>());
+      int nodeId = query.nodeId.value_or(0);
 
-      DbResponse response = db_client->getKeysPrefix(prefix);
+      std::string targetHost;
+      uint16_t targetPort;
+
+      if (!get_target_node(nodeId, targetHost, targetPort, false)) {
+        res.set_status(500);
+        res.write_json(s::error = "Failed to discover database leader");
+        return;
+      }
+
+      DbResponse response;
+      if (nodeId > 0) {
+        auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
+        response = tempDBClient->getKeysPrefix(prefix);
+      } else {
+        auto response = db_client->getKeysPrefix(prefix);
+      }
+
 
       if (!response.success) {
         res.set_status(500);
@@ -550,15 +607,35 @@ inline auto make_routes() {
   // GET /api/keys/paging - Get keys with pagination
   api.get("/api/keys/paging") = [db_client](http_request& req, http_response& res) {
     try {
-      auto query = req.get_parameters(s::pageSize = int(), s::pageNum = int());
+      auto query = req.get_parameters(s::pageSize = int(), s::pageNum = int(), s::nodeId = int());
 
-      if (query.pageSize <= 0 || query.pageNum <= 0) {
+      int pageSize = query.pageSize;
+      int pageNum = query.pageNum;
+
+      if (pageSize <= 0 || pageNum <= 0) {
         res.set_status(400);
         res.write_json(s::error = "pageSize and pageNum must be positive integers");
         return;
       }
 
-      DbResponse response = db_client->getKeysPaging(query.pageSize, query.pageNum);
+      int nodeId = query.nodeId;
+
+      std::string targetHost;
+      uint16_t targetPort;
+
+      if (!get_target_node(nodeId, targetHost, targetPort, false)) {
+        res.set_status(500);
+        res.write_json(s::error = "Failed to discover database leader");
+        return;
+      }
+
+      DbResponse response;
+      if (nodeId > 0) {
+        auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
+        response = tempDBClient->getKeysPaging(pageSize, pageNum);
+      } else {
+        auto response = db_client->getKeysPaging(pageSize, pageNum);
+      }
 
       if (!response.success) {
         res.set_status(500);
