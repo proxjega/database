@@ -169,19 +169,25 @@ static inline sock_t tcp_listen(uint16_t port, int backlog = Consts::LISTEN_BACK
 #ifdef _WIN32
   setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseFlag, sizeof(reuseFlag));
 #else
-  // Set SO_REUSEADDR to allow binding to ports in TIME_WAIT
+  // 1. SO_REUSEADDR: Allows reuse of local addresses in TIME_WAIT
   if (setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, sizeof(reuseFlag)) < 0) {
     log_line(LogLevel::WARN, "Failed to set SO_REUSEADDR on port " + std::to_string(port));
   }
 
-  // Set SO_LINGER to force immediate close without TIME_WAIT
-  // This sends RST instead of FIN, completely skipping TIME_WAIT state
-  struct linger lin;
-  lin.l_onoff = 1;   // Enable linger
-  lin.l_linger = 0;  // Close immediately with RST
-  if (setsockopt(listenSock, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) < 0) {
-    log_line(LogLevel::WARN, "Failed to set SO_LINGER on port " + std::to_string(port));
-  }
+  // 2. SO_REUSEPORT: Critical for fast restarts on modern Linux.
+    // Allows multiple sockets to bind to the same IP/Port if all set this option.
+    #ifdef SO_REUSEPORT
+    if (setsockopt(listenSock, SOL_SOCKET, SO_REUSEPORT, &reuseFlag, sizeof(reuseFlag)) < 0) {
+        log_line(LogLevel::WARN, "Failed to set SO_REUSEPORT on port " + std::to_string(port));
+    }
+    #endif
+
+  // 3. SO_LINGER: Force hard close (RST) instead of graceful close (FIN)
+    // This skips the TIME_WAIT state entirely if the socket is closed with data pending.
+    struct linger lin;
+    lin.l_onoff = 1;   // Enable linger
+    lin.l_linger = 0;  // 0 timeout forces RST
+    setsockopt(listenSock, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
 #endif
 
   sockaddr_in address{};
