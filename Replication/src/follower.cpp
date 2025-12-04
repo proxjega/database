@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <memory>
 #include <chrono>
+#include <stdexcept>
 #include <string>
 #include <sys/types.h>
 
@@ -158,11 +159,15 @@ bool Follower::PerformHandshake(uint64_t &myLsn) {
 
 SessionStatus Follower::RunReplicationSession(uint64_t &myLsn) {
     string line;
-    while (this->running && recv_line(this->currentLeaderSocket, line)) {
-        if (!this->ProcessCommandLine(line, myLsn)) {
-            log_line(LogLevel::ERROR, "Replication protocol error");
-            return SessionStatus::PROTOCOL_ERROR;
+    try {
+        while (this->running && recv_line(this->currentLeaderSocket, line)) {
+            if (!this->ProcessCommandLine(line, myLsn)) {
+                log_line(LogLevel::ERROR, "Replication protocol error");
+                return SessionStatus::PROTOCOL_ERROR;
+            }
         }
+    } catch (const std::length_error &e) {
+        return SessionStatus::CLEAN_DISCONNECT;
     }
 
     return SessionStatus::CLEAN_DISCONNECT;
@@ -193,7 +198,7 @@ bool Follower::ProcessCommandLine(const string &line, uint64_t &myLsn) {
         return true;
     } catch (const std::length_error& ex) {
         FollowerLog(LogLevel::WARN, "Data exceeds limit (" + std::to_string(Database::MAX_VALUE_LENGTH) + " bytes). Reconnecting to flush stream.");
-        return false;
+        throw;
     } catch (const std::exception& ex) {
         FollowerLog(LogLevel::ERROR, string("exception in replication loop: ") + ex.what());
         return false;
