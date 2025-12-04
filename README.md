@@ -33,7 +33,7 @@ Pilnas paskirstytos duomenų bazės sistemos įgyvendinimas su B+ Tree saugykla,
 │           │                                                      │
 │  ┌────────▼─────────────────────────────────────┐              │
 │  │  B+ Tree Database + WAL                      │              │
-│  │  - Puslapių saugykla (4KB puslapiai)        │              │
+│  │  - Puslapių saugykla (16KB puslapiai)        │              │
 │  │  - Write-Ahead Logging                       │              │
 │  │  - CRUD operacijos                           │              │
 │  │  - Range queries (GETFF/GETFB)              │              │
