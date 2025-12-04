@@ -187,12 +187,12 @@ echo "========================================="
 echo "Current leader: Node $LEADER"
 echo "Killing leader to trigger failover..."
 
-# Kill the leader
+# Kill the leader (and force-close all its port connections to avoid TIME_WAIT)
 case $LEADER in
-  1) ssh Anthony@207.180.251.206 'killall run leader follower' 2>/dev/null || true ;;
-  2) ssh Austin@167.86.66.60 'killall run leader follower' 2>/dev/null || true ;;
-  3) ssh Edward@167.86.83.198 'killall run leader follower' 2>/dev/null || true ;;
-  4) ssh Anthony@167.86.81.251 'killall run leader follower' 2>/dev/null || true ;;
+  1) ssh Anthony@207.180.251.206 'ss -K dst :7001 dst :7002 dst :7101 dst :8001 2>/dev/null || true; killall run leader follower' 2>/dev/null || true ;;
+  2) ssh Austin@167.86.66.60 'ss -K dst :7001 dst :7002 dst :7102 dst :8002 2>/dev/null || true; killall run leader follower' 2>/dev/null || true ;;
+  3) ssh Edward@167.86.83.198 'ss -K dst :7001 dst :7002 dst :7103 dst :8003 2>/dev/null || true; killall run leader follower' 2>/dev/null || true ;;
+  4) ssh Anthony@167.86.81.251 'ss -K dst :7001 dst :7002 dst :7104 dst :8004 2>/dev/null || true; killall run leader follower' 2>/dev/null || true ;;
 esac
 
 echo "Waiting 5 seconds for election..."

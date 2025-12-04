@@ -220,24 +220,55 @@ static void stop_process(Child& child) {
   }
 #ifndef _WIN32
   if (child.pid > 0) {
-    // Pirmiausia – švelniai SIGTERM
+    // Force-close all sockets to break blocking recv() calls in detached threads
+    // This allows SIGTERM to be processed instead of being ignored due to I/O wait
+    std::string ss_cmd = "ss -K 'sport = :7001 or sport = :7002 or sport = :7101 or sport = :7102 or sport = :7103 or sport = :7104' 2>/dev/null";
+    int ss_result = system(ss_cmd.c_str());
+    (void)ss_result;  // Ignore failures - this is best-effort cleanup
+
+    // Give sockets time to close (allows threads to exit recv() and process signals)
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Send SIGTERM for graceful shutdown
     kill(child.pid, SIGTERM);
 
-    // Laukiam iki ~2s ar procesas mirs
+    // Wait up to 2 seconds for process to die
+    bool process_died = false;
     for (int i = 0; i < 20; ++i) {
       int status = 0;
       pid_t r = waitpid(child.pid, &status, WNOHANG);
       if (r == child.pid) {
+        process_died = true;
         break;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // Jei po laiko procesas vis dar gyvas – SIGKILL
-    int status = 0;
-    if (waitpid(child.pid, &status, WNOHANG) == 0) {
+    // If still alive, force kill with SIGKILL
+    if (!process_died) {
+      run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+              "Child PID " + std::to_string(child.pid) + " didn't respond to SIGTERM, sending SIGKILL");
+
       kill(child.pid, SIGKILL);
-      waitpid(child.pid, &status, 0);
+
+      // Wait up to 5 more seconds for SIGKILL to work
+      for (int i = 0; i < 50; ++i) {
+        int status = 0;
+        pid_t r = waitpid(child.pid, &status, WNOHANG);
+        if (r == child.pid) {
+          process_died = true;
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+
+      if (!process_died) {
+        // Process is in uninterruptible sleep or kernel deadlock - this is very bad
+        run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+                "CRITICAL: Child PID " + std::to_string(child.pid) +
+                " survived SIGKILL! Process may be in uninterruptible sleep (D state). "
+                "Manual intervention required: kill -9 " + std::to_string(child.pid));
+      }
     }
   }
 #else

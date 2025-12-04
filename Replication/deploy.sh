@@ -42,6 +42,9 @@ ssh_exec_nontty() {
 
 # 1. Stop existing processes
 echo "[1/7] Stopping existing cluster processes..."
+# Force-close all connections on cluster ports to immediately release them from TIME_WAIT
+# This allows immediate rebinding without waiting for TIME_WAIT to expire
+ssh_exec "ss -K dst :7001 2>/dev/null || true; ss -K dst :7002 2>/dev/null || true; ss -K dst :7101 2>/dev/null || true; ss -K dst :7102 2>/dev/null || true; ss -K dst :7103 2>/dev/null || true; ss -K dst :7104 2>/dev/null || true; ss -K dst :8001 2>/dev/null || true; ss -K dst :8002 2>/dev/null || true; ss -K dst :8003 2>/dev/null || true; ss -K dst :8004 2>/dev/null || true" || true
 # Use graceful kill (SIGTERM) first, then force kill
 ssh_exec "killall run leader follower 2>/dev/null || true; sleep 2; killall -9 run leader follower 2>/dev/null || true" || true
 
