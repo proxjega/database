@@ -90,46 +90,7 @@ static int random_election_timeout_ms() {
   return dist(rng);
 }
 
-// Log failo pavadinimas šitam node (pvz. "node1.log")
-static std::string my_log_file() {
-  return "node" + std::to_string(g_self_id) + ".log";
-}
-
 // -------- lastSeq helpers --------
-
-// Perskaito paskutinę eilutę iš WAL/log failo ir bando iš jos ištraukti seq (pirmą lauką)
-// Tikimasi formato: "<seq>\tKITI_LAUKAI"
-static uint64_t parse_last_seq_from_file(const std::string& path) {
-  std::ifstream in(path);
-  if (!in.good()) return 0;
-
-  std::string line, last;
-  // Skaitom failą iki galo ir prisimenam paskutinę ne tuščią eilutę
-  while (std::getline(in, line)) {
-    if (!line.empty()) {
-      last = line;
-    }
-  }
-
-  if (last.empty()) {
-    return 0;
-  }
-
-  // Pirmiausia skaldom pagal tab'ą, jei nepavyksta – pagal tarpą
-  auto parts = split(last, '\t');
-  if (parts.empty()) {
-    parts = split(last, ' ');
-  }
-  if (parts.empty()) {
-    return 0;
-  }
-
-  try {
-    return (uint64_t)std::stoull(parts[0]);
-  } catch (...) {
-    return 0;
-  }
-}
 
 static std::string my_db_name() {
     return "node" + std::to_string(g_self_id);
@@ -201,7 +162,8 @@ static bool start_process(const std::string &cmd, Child &child) {
   pid_t pid = fork();
   if (pid == 0) {
     // Vaiko procese – paleidžiam shell ir exe
-    execl("/bin/sh", "sh", "-c", cmd.c_str(), (char*)nullptr);
+    std::string execCmd = "exec " + cmd;
+    execl("/bin/sh", "sh", "-c", execCmd.c_str(), (char*)nullptr);
     _exit(127); // jei execl nepavyko
   } else if (pid > 0) {
     // Tėvo procese
@@ -363,6 +325,10 @@ static void handle_conn(sock_t client_socket) {
       if (term > g_current_term.load()) {
         g_current_term = term;
         g_voted_for    = -1;
+
+        if (g_cluster_state.state != NodeState::FOLLOWER) {
+          g_cluster_state.state = NodeState::FOLLOWER;
+        }
       }
 
       // Balsavimo logika: balsuojam jei:
@@ -375,18 +341,20 @@ static void handle_conn(sock_t client_socket) {
             (candidate_seq >= my_seq)) {
           g_voted_for = candidate_id;
           grant       = true;
+
+          g_last_heartbeat_ms = now_ms();
         }
       }
 
       // Grąžinam VOTE_RESP kandidatui per atskirą TCP jungtį
       if (const auto *candidate_node = getNode(candidate_id)) {
-        sock_t s = tcp_connect(candidate_node->host, candidate_node->port);
-        if (s != NET_INVALID) {
+        sock_t sock = tcp_connect(candidate_node->host, candidate_node->port);
+        if (sock != NET_INVALID) {
           send_all(
-            s,
+            sock,
             "VOTE_RESP " + std::to_string(term) + " " + (grant ? "1" : "0") + "\n"
           );
-          net_close(s);
+          net_close(sock);
         } else {
           run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
                   "failed to connect back to candidate for VOTE_RESP");
@@ -798,6 +766,29 @@ static void role_process_manager() {
     stop_process(g_child);
 }
 
+// 1. Define the cleanup function
+static void cleanup_stale_processes() {
+    // If ports are dynamic based on ID, ensure g_self_id is set before calling this.
+    // We redirect stderr to /dev/null so we don't see errors if no process was running.
+
+    // Kill process holding the CLIENT_PORT
+    std::string cmd1 = "fuser -k -n tcp " + std::to_string(CLIENT_PORT) + " >/dev/null 2>&1";
+    system(cmd1.c_str());
+
+    // Kill process holding the REPLICATION PORT (if different)
+    std::string cmd2 = "fuser -k -n tcp " + std::to_string(REPL_PORT) + " >/dev/null 2>&1";
+    system(cmd2.c_str());
+
+    // Kill process holding the FOLLOWER READ PORT (if specific to this node)
+    // Note: If FOLLOWER_READ_PORT depends on g_self_id, this works because we call it after ID parsing
+    uint16_t readPort = FOLLOWER_READ_PORT(g_self_id);
+    std::string cmd3 = "fuser -k -n tcp " + std::to_string(readPort) + " >/dev/null 2>&1";
+    system(cmd3.c_str());
+
+    // Wait briefly for the OS to release the file descriptors
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+}
+
 // -------- main --------
 
 int main(int argc, char** argv) {
@@ -822,6 +813,9 @@ int main(int argc, char** argv) {
       return 1;
     }
     g_self_info = *me;
+
+    // Kai suzinome savo node ID galima killinti senus procesus.
+    cleanup_stale_processes();
 
     // Log'as, kad žinotume, kokiame control porte klausom šito run proceso
     run_log(

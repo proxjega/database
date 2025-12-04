@@ -57,7 +57,7 @@ private:
     bool WriteRecordToStream(const WalRecord& record);
 
 public:
-    static constexpr size_t DEFAULT_SEGMENT_SIZE = 1UL * 1024UL;
+    static constexpr size_t DEFAULT_SEGMENT_SIZE = 16UL * 1024UL * 1024UL;
 
     explicit WAL(const string &databaseName, size_t MaxSegmentSizeBytes = DEFAULT_SEGMENT_SIZE); // Default 16MB. Same as Postgres
 

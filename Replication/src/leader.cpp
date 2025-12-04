@@ -227,6 +227,12 @@ void Leader::HandleFollower(sock_t followerSocket) {
       }
     }
 
+    if (!send_all(followerSocket, "OK\n")) {
+       log_line(LogLevel::WARN, "Failed to send handshake ACK");
+       net_close(followerSocket);
+       return;
+    }
+
     // 3. Persiunčiam follower'iui visus įrašus nuo jo paskutinio turimo LSN.
     auto missingRecords = this->duombaze->GetWalRecordsSince(lastAppliedLsn);
     {
