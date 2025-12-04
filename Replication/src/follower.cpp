@@ -310,7 +310,7 @@ void Follower::HandleRangeQuery(sock_t sock, const vector<string> &tokens, bool 
             : this->duombaze->GetFB(startKey, count);
 
         for (const auto &cell : results) {
-            send_all(sock, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value));
+            send_all(sock, "KEY_VALUE " + cell.key + " " + format_length_prefixed_value(cell.value) + "\n");
         }
         send_all(sock, "END\n");
     } catch (const std::exception& e) {
