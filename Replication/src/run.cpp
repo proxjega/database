@@ -233,42 +233,41 @@ static void stop_process(Child& child) {
     kill(child.pid, SIGTERM);
 
     // Wait up to 2 seconds for process to die
-    bool process_died = false;
-    for (int i = 0; i < 20; ++i) {
+    bool proccessDied = false;
+    for (int i = 0; i < 10; ++i) {
       int status = 0;
-      pid_t r = waitpid(child.pid, &status, WNOHANG);
+      auto r = waitpid(child.pid, &status, WNOHANG);
       if (r == child.pid) {
-        process_died = true;
+        proccessDied = true;
         break;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
 
-    // If still alive, force kill with SIGKILL
-    if (!process_died) {
-      run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
-              "Child PID " + std::to_string(child.pid) + " didn't respond to SIGTERM, sending SIGKILL");
+    run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
+            "Child PID " + std::to_string(child.pid) + " didn't respond to SIGTERM, sending SIGKILL");
 
+    kill(child.pid, SIGKILL);
+
+    // Wait up to 1 more seconds for SIGKILL to work
+    for (int i = 0; i < 10; ++i) {
+      int status;
+      auto proccessID = waitpid(child.pid, &status, WNOHANG);
+      if (proccessID == child.pid) {
+        proccessDied = true;
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    if (!proccessDied) {
+      // Process is in uninterruptible sleep or kernel deadlock - this is very bad
+      run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
+              "CRITICAL: Child PID " + std::to_string(child.pid) +
+              " survived SIGKILL! Process may be in uninterruptible sleep (D state). "
+              "Manual intervention required: kill -9 " + std::to_string(child.pid));
       kill(child.pid, SIGKILL);
-
-      // Wait up to 5 more seconds for SIGKILL to work
-      for (int i = 0; i < 50; ++i) {
-        int status = 0;
-        pid_t r = waitpid(child.pid, &status, WNOHANG);
-        if (r == child.pid) {
-          process_died = true;
-          break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      }
-
-      if (!process_died) {
-        // Process is in uninterruptible sleep or kernel deadlock - this is very bad
-        run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
-                "CRITICAL: Child PID " + std::to_string(child.pid) +
-                " survived SIGKILL! Process may be in uninterruptible sleep (D state). "
-                "Manual intervention required: kill -9 " + std::to_string(child.pid));
-      }
+      waitpid(child.pid, nullptr, 0); // Laukiam kol tikrai dings iš sistemos lentelės
     }
   }
 #else
@@ -279,6 +278,7 @@ static void stop_process(Child& child) {
 #endif
 
   child.running = false;
+  child.pid = -1;
 }
 
 // -------- Control plane (HB / votes) --------
@@ -727,95 +727,75 @@ static void follower_monitor() {
 // Šitas thread'as žiūri į NodeState ir spawn'ina / stabdo
 // atitinkamą child procesą: leader arba follower.
 static void role_process_manager() {
-  NodeState last_role = NodeState::FOLLOWER;
-  int       last_effective_leader = 0;
+    NodeState lastRole = NodeState::FOLLOWER;
+    std::string dbName = my_db_name();
 
-  std::string dbName = my_db_name();
+    while (g_cluster_state.alive) {
+        NodeState currentRole = g_cluster_state.state.load();
 
-  while (g_cluster_state.alive) {
-    NodeState role = g_cluster_state.state.load();
-    int effective_leader =
-      (role == NodeState::LEADER) ? g_self_id : g_effective_leader;
+        bool isLeader = (currentRole == NodeState::LEADER);
+        bool wasLeader = (lastRole == NodeState::LEADER);
+        int effectiveLeader = (isLeader) ? g_self_id : g_effective_leader;
 
-    // Jei mes = LEADER: turi veikti leader.exe / leader.
-    if (role == NodeState::LEADER) {
-      // Spawninam iš naujo jei:
-      // - anksčiau nebuvom LEADER
-      // - arba child'as numirė
-      if (last_role != NodeState::LEADER || !child_alive(g_child)) {
-        stop_process(g_child);
-        // Require majority acknowledgments for write operations (quorum enforcement)
-        const int requiredAcks = (CLUSTER_N / 2);  // 2 for 4-node cluster
-#ifdef _WIN32
-        std::string cmd = ".\\leader.exe " +
-                          std::to_string(CLIENT_PORT) + " " +
-                          std::to_string(REPL_PORT)   + " " +
-                          dbName + " " +
-                          std::to_string(requiredAcks) + " " +
-                          g_self_info.host;
-#else
-        // Linux/macOS komanda leader binarui paleisti
-        std::string cmd = "./leader " +
-                          std::to_string(CLIENT_PORT) + " " +
-                          std::to_string(REPL_PORT)   + " " +
-                          dbName + " " +
-                          std::to_string(requiredAcks) + " " +
-                          g_self_info.host;
-#endif
-        run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
-                "spawn leader child: " + cmd);
-        start_process(cmd, g_child);
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
-      }
-    } else {
-      // Jei mes NE leader – turim būti followeris, jei žinom effective_leader.
-      if (effective_leader != 0 &&
-          (last_role == NodeState::LEADER ||
-           last_effective_leader != effective_leader ||
-           !child_alive(g_child))) {
-
-        stop_process(g_child);
-        const NodeInfo* leader_node = getNode(effective_leader);
-        if (leader_node != nullptr) {
-          const std::string &follower_log  = dbName;                           // WAL failas followeriui
-          std::string follower_snap = "f" + std::to_string(g_self_id) + ".snap"; // snapshot failas
-          uint16_t    read_port     = FOLLOWER_READ_PORT(g_self_id);  // Separate read-only port for followers
-#ifdef _WIN32
-          std::string cmd = ".\\follower.exe " +
-                            leader_node->host + " " +
-                            std::to_string(REPL_PORT) + " " +
-                            follower_log  + " " +
-                            follower_snap + " " +
-                            std::to_string(read_port) + " " +
-                            std::to_string(g_self_id);
-#else
-          // Linux/macOS follower binaro paleidimo komanda
-          std::string cmd = "./follower " +
-                            leader_node->host + " " +
-                            std::to_string(REPL_PORT) + " " +
-                            follower_log  + " " +
-                            follower_snap + " " +
-                            std::to_string(read_port) + " " +
-                            std::to_string(g_self_id);
-#endif
-          run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
-                  "spawn follower child: " + cmd);
-          start_process(cmd, g_child);
-          std::this_thread::sleep_for(std::chrono::milliseconds(300));
-        } else {
-          run_log(g_cluster_state, g_self_id, RunLogLevel::WARN,
-                  "no NodeInfo for effective leader id " + std::to_string(effective_leader));
+        // 1. Role Change: STOP everything immediately
+        // This prevents "split-brain" processes (running leader and follower simultaneously)
+        if (isLeader != wasLeader) {
+            run_log(g_cluster_state, g_self_id, RunLogLevel::INFO,
+                    "Role changed (" + std::to_string((int)lastRole) + " -> " + std::to_string((int)currentRole) +
+                    "). Stopping current child process...");
+            stop_process(g_child);
         }
-      }
+
+        // 2. Spawn Logic
+        if (isLeader) {
+            // --- LEADER SPAWN LOGIC ---
+            if (!child_alive(g_child)) {
+                const int requiredAcks = (CLUSTER_N / 2); // e.g. 2 for 4 nodes
+
+                std::string cmd = "./leader " +
+                                  std::to_string(CLIENT_PORT) + " " +
+                                  std::to_string(REPL_PORT)   + " " +
+                                  dbName + " " +
+                                  std::to_string(requiredAcks) + " " +
+                                  g_self_info.host;
+
+                run_log(g_cluster_state, g_self_id, RunLogLevel::INFO, "spawn leader child: " + cmd);
+                start_process(cmd, g_child);
+            }
+        } else {
+            // --- FOLLOWER SPAWN LOGIC ---
+            if (effectiveLeader != 0 && effectiveLeader != g_self_id) {
+                const NodeInfo* leaderNode = getNode(effectiveLeader);
+
+                if (leaderNode != nullptr) {
+                    // Check if child is alive. If we just switched roles, stop_process above
+                    // ensured it's dead, so this will trigger a spawn.
+                    if (!child_alive(g_child)) {
+
+                        std::string followerLog  = dbName;
+                        std::string followerSnap = "f" + std::to_string(g_self_id) + ".snap";
+                        uint16_t    readPort     = FOLLOWER_READ_PORT(g_self_id);
+
+                        std::string cmd = "./follower " +
+                                          leaderNode->host + " " +
+                                          std::to_string(REPL_PORT) + " " +
+                                          followerLog  + " " +
+                                          followerSnap + " " +
+                                          std::to_string(readPort) + " " +
+                                          std::to_string(g_self_id);
+
+                        run_log(g_cluster_state, g_self_id, RunLogLevel::INFO, "spawn follower child: " + cmd);
+                        start_process(cmd, g_child);
+                    }
+                }
+            }
+        }
+
+        lastRole = currentRole;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
-    last_role             = role;
-    last_effective_leader = effective_leader;
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  }
-
-  // Išeinant – uždarom vaiką
-  stop_process(g_child);
+    stop_process(g_child);
 }
 
 // -------- main --------

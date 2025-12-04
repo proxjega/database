@@ -33,9 +33,9 @@ static inline uint16_t FOLLOWER_READ_PORT(int nodeId) {
 }
 
 // Laiko parametrai (ms).
-static constexpr int HEARTBEAT_INTERVAL_MS = 400;   // kas kiek siųsti heartbeat'ą
-static constexpr int HEARTBEAT_TIMEOUT_MS  = 1500;  // po kiek laikyti leader'į mirusiu
-static constexpr int ELECTION_TIMEOUT_MS   = 1200;  // minimalus laukimas iki rinkimų starto
+static constexpr int HEARTBEAT_INTERVAL_MS = 200;   // kas kiek siųsti heartbeat'ą
+static constexpr int HEARTBEAT_TIMEOUT_MS  = 2000;  // po kiek laikyti leader'į mirusiu
+static constexpr int ELECTION_TIMEOUT_MS   = 2500;  // minimalus laukimas iki rinkimų starto
 
 // Mazgo būsena Raft stiliaus protokole.
 enum class NodeState : uint8_t { FOLLOWER, CANDIDATE, LEADER };
