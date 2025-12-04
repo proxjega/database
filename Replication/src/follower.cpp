@@ -257,10 +257,11 @@ bool Follower::ApplyResetWAL(uint64_t &localLSN) {
 void Follower::ServeReadOnly() {
     sock_t listenSocket = NET_INVALID;
 
-    // Retry binding up to 5 times with 2-second delay (10 seconds total)
-    // With SO_LINGER (l_linger=0) on both listen and client sockets, we skip TIME_WAIT
-    // entirely by sending RST instead of FIN. A few retries handle race conditions.
-    for (int retry = 0; retry < 5 && this->running; ++retry) {
+    // Retry binding up to 35 times with 2-second delay (70 seconds total)
+    // Linux TIME_WAIT can last up to 60 seconds. Even with SO_LINGER (RST instead of FIN),
+    // the HTTP client may not have SO_LINGER, causing TIME_WAIT on our side.
+    // We must wait longer than the TIME_WAIT duration to guarantee success.
+    for (int retry = 0; retry < 35 && this->running; ++retry) {
         listenSocket = tcp_listen(this->readPort);
         if (listenSocket != NET_INVALID) {
             break;  // Success!
@@ -268,7 +269,7 @@ void Follower::ServeReadOnly() {
 
         log_line(LogLevel::WARN,
                  "Follower read-only bind failed on port " + std::to_string(this->readPort) +
-                 ", retrying in 2s (attempt " + std::to_string(retry + 1) + "/5)");
+                 ", retrying in 2s (attempt " + std::to_string(retry + 1) + "/35)");
 
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
@@ -276,7 +277,7 @@ void Follower::ServeReadOnly() {
     if (listenSocket == NET_INVALID) {
         log_line(LogLevel::ERROR,
                  "Follower cannot bind read-only port " + std::to_string(this->readPort) +
-                 " after 5 retries, exiting ServeReadOnly");
+                 " after 35 retries (70s), exiting ServeReadOnly");
         return;  // Only return after exhausting retries
     }
 

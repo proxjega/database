@@ -170,13 +170,18 @@ static inline sock_t tcp_listen(uint16_t port, int backlog = Consts::LISTEN_BACK
   setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuseFlag, sizeof(reuseFlag));
 #else
   // Set SO_REUSEADDR to allow binding to ports in TIME_WAIT
-  setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, sizeof(reuseFlag));
+  if (setsockopt(listenSock, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, sizeof(reuseFlag)) < 0) {
+    log_line(LogLevel::WARN, "Failed to set SO_REUSEADDR on port " + std::to_string(port));
+  }
 
   // Set SO_LINGER to force immediate close without TIME_WAIT
+  // This sends RST instead of FIN, completely skipping TIME_WAIT state
   struct linger lin;
   lin.l_onoff = 1;   // Enable linger
-  lin.l_linger = 0;  // Close immediately, send RST instead of FIN
-  setsockopt(listenSock, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
+  lin.l_linger = 0;  // Close immediately with RST
+  if (setsockopt(listenSock, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) < 0) {
+    log_line(LogLevel::WARN, "Failed to set SO_LINGER on port " + std::to_string(port));
+  }
 #endif
 
   sockaddr_in address{};
