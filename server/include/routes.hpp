@@ -429,7 +429,7 @@ inline auto make_routes() {
         auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
         result = tempDBClient->getff(key, count);
       } else {
-        auto result = db_client->getff(key, count);
+        result = db_client->getff(key, count);
       }
 
       if (result.success) {
@@ -487,7 +487,7 @@ inline auto make_routes() {
         auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
         result = tempDBClient->getfb(key, count);
       } else {
-        auto result = db_client->getfb(key, count);
+        result = db_client->getfb(key, count);
       }
 
       if (result.success) {
@@ -524,7 +524,7 @@ inline auto make_routes() {
       std::string targetHost;
       uint16_t targetPort;
 
-      if (!get_target_node(nodeId, targetHost, targetPort, false)) {
+      if (!get_target_node(nodeId, targetHost, targetPort, true)) {
         res.set_status(500);
         res.write_json(s::error = "Failed to discover database leader");
         return;
@@ -535,7 +535,7 @@ inline auto make_routes() {
         auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
         result = tempDBClient->optimize();
       } else {
-        auto result = db_client->optimize();
+        result = db_client->optimize();
       }
 
       if (result.success) {
@@ -578,7 +578,7 @@ inline auto make_routes() {
         auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
         response = tempDBClient->getKeysPrefix(prefix);
       } else {
-        auto response = db_client->getKeysPrefix(prefix);
+        response = db_client->getKeysPrefix(prefix);
       }
 
 
@@ -634,7 +634,7 @@ inline auto make_routes() {
         auto tempDBClient = std::make_shared<DbClient>(targetHost, targetPort);
         response = tempDBClient->getKeysPaging(pageSize, pageNum);
       } else {
-        auto response = db_client->getKeysPaging(pageSize, pageNum);
+        response = db_client->getKeysPaging(pageSize, pageNum);
       }
 
       if (!response.success) {
