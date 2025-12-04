@@ -48,7 +48,7 @@ private:
     SessionStatus RunReplicationSession(uint64_t &myLsn);
     bool ApplySetRecord(const vector<string> &tokens, uint64_t &currentLsn);
     bool ApplyDeleteRecord(const vector<string> &tokens, uint64_t &currentLsn);
-    bool ProccessCommandLine(const string &line, uint64_t &myLsn);
+    bool ProcessCommandLine(const string &line, uint64_t &myLsn);
 
     // Susije su klientu.
     void ServeReadOnly(); // Veikia main thread'e.

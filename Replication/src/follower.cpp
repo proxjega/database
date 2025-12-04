@@ -1,5 +1,6 @@
 #include "../include/follower.hpp"
 #include "../include/rules.hpp"
+#include "../../btree/include/database.h"
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -109,6 +110,10 @@ void Follower::SyncWithLeader() {
             continue;
         }
 
+        // Handshake good. Lyderis gyvas. Resetinam kintamuosius.
+        failureCount = 0;
+        backoffMs = BASE_BACKOFF_MS;
+
         // 3. Atliekame replikaciją.
         auto status = this->RunReplicationSession(lastAppliedLsn);
 
@@ -120,9 +125,6 @@ void Follower::SyncWithLeader() {
         if (status == SessionStatus::PROTOCOL_ERROR) {
             log_line(LogLevel::ERROR, "Leader violated protocol! Incrementing failure count.");
             failureCount++;
-        } else if (status == SessionStatus::CLEAN_DISCONNECT) {
-            failureCount = 0;
-            backoffMs = BASE_BACKOFF_MS;
         }
 
         // 7. Šiek tiek pamiegame prieš reconnect bandymą.
@@ -157,7 +159,7 @@ bool Follower::PerformHandshake(uint64_t &myLsn) {
 SessionStatus Follower::RunReplicationSession(uint64_t &myLsn) {
     string line;
     while (this->running && recv_line(this->currentLeaderSocket, line)) {
-        if (!this->ProccessCommandLine(line, myLsn)) {
+        if (!this->ProcessCommandLine(line, myLsn)) {
             log_line(LogLevel::ERROR, "Replication protocol error");
             return SessionStatus::PROTOCOL_ERROR;
         }
@@ -166,7 +168,7 @@ SessionStatus Follower::RunReplicationSession(uint64_t &myLsn) {
     return SessionStatus::CLEAN_DISCONNECT;
 }
 
-bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn) {
+bool Follower::ProcessCommandLine(const string &line, uint64_t &myLsn) {
     auto tokens = split(trim(line), ' ');
     if (tokens.empty()) {
         return true;
@@ -189,6 +191,9 @@ bool Follower::ProccessCommandLine(const string &line, uint64_t &myLsn) {
         }
 
         return true;
+    } catch (const std::length_error& ex) {
+        FollowerLog(LogLevel::WARN, "Data exceeds limit (" + std::to_string(Database::MAX_VALUE_LENGTH) + " bytes). Reconnecting to flush stream.");
+        return false;
     } catch (const std::exception& ex) {
         FollowerLog(LogLevel::ERROR, string("exception in replication loop: ") + ex.what());
         return false;
