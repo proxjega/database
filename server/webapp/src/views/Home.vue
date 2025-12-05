@@ -1,22 +1,12 @@
 <template>
-  <div class="container mt-4">
-    <div class="text-center mb-4">
-      <h1 class="display-5">Paskirstyta Raktų-Reikšmių Duomenų Bazė</h1>
-    </div>
+  <div class="container">
+    <node-selector @node-changed="onNodeChanged" v-model:message="message" v-model:error="error"/>
 
-    <!-- NEW: Node Selector -->
-    <node-selector @node-changed="onNodeChanged" />
-
-    <!-- Error/Success Messages -->
-    <div v-if="message" class="alert alert-success alert-dismissible fade show" role="alert">
-      {{ message }}
-      <button type="button" class="btn-close" @click="message = null"></button>
-    </div>
-
-    <div v-if="error" class="alert alert-danger alert-dismissible fade show" role="alert">
-      {{ error }}
-      <button type="button" class="btn-close" @click="error = null"></button>
-    </div>
+    <!-- Main Content -->
+    <div class="main-content">
+      <div class="text-center mb-4">
+        <h1 class="display-5">Paskirstyta Raktų-Reikšmių Duomenų Bazė</h1>
+      </div>
 
     <!-- Section 1: SET and DELETE -->
     <div class="row mb-4">
@@ -379,6 +369,7 @@
         </div>
       </div>
     </div>
+    </div>
   </div>
 </template>
 
@@ -664,8 +655,27 @@ export default {
       }
     },
 
-    onNodeChanged(nodeId) {
-      this.message = `Connected to Node ${nodeId}`;
+    onNodeChanged(nodeData) {
+      // nodeData contains: { nodeId, status, role, isOnline }
+      const nodeId = nodeData.nodeId;
+      const status = nodeData.status;
+      const role = nodeData.role;
+      const isOnline = nodeData.isOnline;
+
+      // Clear previous messages
+      this.message = null;
+      this.error = null;
+
+      // Display appropriate message based on node status
+      if (!isOnline || status === 'OFFLINE') {
+        this.error = `Mazgas ${nodeId} yra OFFLINE. Pasirinkite kitą mazgą.`;
+      } else if (status === 'UNREACHABLE') {
+        this.error = `Mazgas ${nodeId} yra NEPASIEKIAMAS. Pasirinkite kitą mazgą.`;
+      } else {
+        // Node is online - show role info
+        const roleText = role === 'LEADER' ? 'LYDERIS' : role === 'FOLLOWER' ? 'SEKĖJAS' : role;
+        this.message = `Pasirinktas Mazgas ${nodeId} (${roleText})`;
+      }
 
       // Clear previous results to avoid confusion
       this.retrievedValue = null;
@@ -679,8 +689,13 @@ export default {
 </script>
 
 <style scoped lang="scss">
+.main-content {
+  max-width: 1200px;
+}
+
 .container {
   max-width: 1200px;
+  padding-top: 1rem;
 }
 
 .card {
