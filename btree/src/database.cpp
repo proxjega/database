@@ -1092,6 +1092,7 @@ vector<leafNodeCell> Database::GetFB(const string &key, uint32_t n) const {
     //get keys from leaf page
     LeafPage leaf(currentPage);
     int16_t index = leaf.FindInsertPosition(key);
+    if (index > leaf.Header()->numberOfCells-1) index--; // apsauga nuo out of bounds
     for (int16_t i = index; i >= 0; i--) {
         auto cell = leaf.GetKeyValue(leaf.Offsets()[i]);
         keyValuePairs.push_back(cell);
