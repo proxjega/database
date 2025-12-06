@@ -383,7 +383,9 @@ static void handle_conn(sock_t client_socket) {
           string follower_line;
           while (recv_line(leader_sock, follower_line)) {
             follower_line = trim(follower_line);
-            if (follower_line == "END") break;
+            if (follower_line == "END") {
+              break;
+            }
             if (follower_line.substr(0, 16) == "FOLLOWER_STATUS ") {
               response << follower_line << "\n";
             }
@@ -454,15 +456,15 @@ static void leader_heartbeat() {
 
       // Broadcastinam heartbeat'ą visiems node'ams
       for (auto& node : CLUSTER) {
-        sock_t s = tcp_connect(node.host, node.port);
-        if (s != NET_INVALID) {
+        sock_t sock = tcp_connect(node.host, node.port);
+        if (sock != NET_INVALID) {
           send_all(
-            s,
+            sock,
             "HB " + std::to_string(g_current_term.load()) + " " +
             std::to_string(g_self_id) + " " +
             std::to_string(last_seq) + "\n"
           );
-          net_close(s);
+          net_close(sock);
         }
       }
 
@@ -708,11 +710,9 @@ static void role_process_manager() {
                 const NodeInfo* leaderNode = getNode(effectiveLeader);
 
                 if (leaderNode != nullptr) {
-                    // Check if child is alive. If we just switched roles, stop_process above
-                    // ensured it's dead, so this will trigger a spawn.
                     if (!child_alive(g_child)) {
 
-                        string followerLog  = dbName;
+                        const string &followerLog  = dbName;
                         string followerSnap = "f" + std::to_string(g_self_id) + ".snap";
                         uint16_t    readPort     = FOLLOWER_READ_PORT(g_self_id);
 
@@ -738,30 +738,25 @@ static void role_process_manager() {
     stop_process(g_child);
 }
 
-// 1. Define the cleanup function
 static void cleanup_stale_processes() {
-    // If ports are dynamic based on ID, ensure g_self_id is set before calling this.
-    // We redirect stderr to /dev/null so we don't see errors if no process was running.
 
-    // Kill process holding the CLIENT_PORT
+    // Žudome procesą su CLIENT_PORT.
     string cmd1 = "fuser -k -n tcp " + std::to_string(CLIENT_PORT) + " >/dev/null 2>&1";
     system(cmd1.c_str());
 
-    // Kill process holding the REPLICATION PORT (if different)
+    // Žudome procesą su REPL_PORT/
     string cmd2 = "fuser -k -n tcp " + std::to_string(REPL_PORT) + " >/dev/null 2>&1";
     system(cmd2.c_str());
 
-    // Kill process holding the FOLLOWER READ PORT (if specific to this node)
-    // Note: If FOLLOWER_READ_PORT depends on g_self_id, this works because we call it after ID parsing
+    // Žudome procesą su Follower'io read-only port'u.
     uint16_t readPort = FOLLOWER_READ_PORT(g_self_id);
     string cmd3 = "fuser -k -n tcp " + std::to_string(readPort) + " >/dev/null 2>&1";
     system(cmd3.c_str());
 
-    // Wait briefly for the OS to release the file descriptors
+    // Trpuiiti palaukiame, kol OS paleis FD.
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 }
 
-// -------- main --------
 
 int main(int argc, char** argv) {
   try {
@@ -786,7 +781,7 @@ int main(int argc, char** argv) {
     }
     g_self_info = *me;
 
-    // Kai suzinome savo node ID galima killinti senus procesus.
+    // Kai suzinome savo node ID galima kill'inti senus procesus.
     cleanup_stale_processes();
 
     // Log'as, kad žinotume, kokiame control porte klausom šito run proceso
@@ -797,7 +792,7 @@ int main(int argc, char** argv) {
       "control port " + std::to_string(g_self_info.port)
     );
 
-    // Pasiimam paskutinį seq iš savo log failo
+    // Pasiimam paskutinį seq iš savo duombazes meta page header'o
     g_my_last_seq = compute_my_last_seq();
 
     // Paleidžiam 3 background thread'us:

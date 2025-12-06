@@ -198,7 +198,7 @@ int main(int argc, char** argv) {
     int detectedLeaderId = 0;
     string detectedLeaderHost;
 
-    // Query each node's control plane port
+    // Einam per kiekvieno node'o control plane port'ą.
     for (auto& node : CLUSTER) {
       uint16_t controlPort = node.port;  // Control plane port (8001-8004)
       sock_t sock = tcp_connect(node.host, controlPort);
@@ -252,14 +252,12 @@ int main(int argc, char** argv) {
       nodeStatuses.push_back(nodeStatus);
     }
 
-    // Display current leader
     if (detectedLeaderId > 0) {
       cout << "Current Leader: " << detectedLeaderHost << " (Node " << detectedLeaderId << ")\n\n";
     } else {
       cout << "No leader detected - election in progress?\n\n";
     }
 
-    // Display node status table
     cout << "Node Status:\n";
     cout << "ID | Role      | LSN   | Status | Last HB Age\n";
     cout << "---|-----------|-------|--------|------------\n";
@@ -284,7 +282,6 @@ int main(int argc, char** argv) {
       cout << "\n";
     }
 
-    // Display replication status if leader found
     bool foundLeaderWithFollowers = false;
     for (auto& nodeStatus : nodeStatuses) {
       if (nodeStatus.role == "LEADER" && !nodeStatus.followers.empty()) {
@@ -299,7 +296,6 @@ int main(int argc, char** argv) {
           string fstatus = std::get<1>(follower);
           uint64_t flsn = std::get<2>(follower);
 
-          // Count both ALIVE and RECENT as healthy (RECENT = recently disconnected but expected to reconnect)
           if (fstatus == "ALIVE" || fstatus == "RECENT") {
             aliveCount++;
           }
@@ -362,7 +358,6 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Parse first argument - could be node alias or host
   string firstArg = argv[1];
   string leaderHost;
   uint16_t leaderPort;
@@ -377,16 +372,15 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    // Get node info from CLUSTER array
+    // Gauname node'o informaciją.
     const auto& node = CLUSTER[nodeId - 1];
     leaderHost = node.host;
-    leaderPort = LEADER_CLIENT_API_PORT;  // All nodes use port LEADER_CLIENT_API_PORT for client API
+    leaderPort = LEADER_CLIENT_API_PORT;  // Visi node'ai naudoja LEADER_CLIENT_API_PORT bendravimui su CLIENT.
     command = (argc >= 3) ? argv[2] : "";
     commandArgOffset = 3;
 
     cout << "→ Connecting to Node " << nodeId << " (" << leaderHost << ":" << leaderPort << ")\n";
   } else {
-    // Traditional host:port format
     if (argc < 4) {
       std::cerr << "Insufficient arguments. See usage above.\n";
       return 1;

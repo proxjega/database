@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 #include <string>
+#include <atomic>
 
 using std::string;
 using std::vector;

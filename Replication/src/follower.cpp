@@ -45,7 +45,7 @@ Follower::~Follower() {
         this->readListenSocket = NET_INVALID;
     }
 
-    // 2. Close the connection to the leader to stop Sync loop (SyncWithLeaderLoop)
+    // 2. Nutraukiame ryšį su lyderiu, kad sustabdyti SyncWithLeader.
     if (this->currentLeaderSocket != NET_INVALID) {
         net_close(this->currentLeaderSocket);
         this->currentLeaderSocket = NET_INVALID;
@@ -58,7 +58,7 @@ Follower::~Follower() {
 }
 
 void Follower::Run() {
-    // 1. Pradedame sinchronizacija su lyderiu background'e.
+    // 1. Pradedame sinchronizaciją su lyderiu background'e.
     this->readOnlyThread= thread(&Follower::ServeReadOnly, this);
 
     // 2. Aktyvuojame Read-Only pagrindiniame thread'e.
@@ -286,10 +286,6 @@ bool Follower::ApplyResetWAL(uint64_t &localLSN) {
 void Follower::ServeReadOnly() {
     sock_t listenSocket = NET_INVALID;
 
-    // Retry binding up to 35 times with 2-second delay (70 seconds total)
-    // Linux TIME_WAIT can last up to 60 seconds. Even with SO_LINGER (RST instead of FIN),
-    // the HTTP client may not have SO_LINGER, causing TIME_WAIT on our side.
-    // We must wait longer than the TIME_WAIT duration to guarantee success.
     for (int retry = 0; retry < Consts::BIND_READONLY_RETRIES && this->running; ++retry) {
         listenSocket = tcp_listen(this->readPort);
         if (listenSocket != NET_INVALID) {
@@ -307,7 +303,7 @@ void Follower::ServeReadOnly() {
         log_line(LogLevel::ERROR,
                  "Follower cannot bind read-only port " + std::to_string(this->readPort) +
                  " after " + std::to_string(Consts::BIND_READONLY_RETRIES) + "retries (70s), exiting ServeReadOnly");
-        return;  // Only return after exhausting retries
+        return;  // Return tik po visų bandymų.
     }
 
     this->readListenSocket = listenSocket;
@@ -425,8 +421,8 @@ void Follower::HandleClient(sock_t clientSocket) {
                 HandleGetKeysPaging(clientSocket, tokens);
             }
             else {
-                // Reject all write operations (SET, DEL) and unsupported commands
-                // Followers are read-only and support: GET, GETFF, GETFB, GETKEYS, GETKEYSPAGING
+                // Atmetame visas WRITE operacijas (SET, DEL) ir kitas nepalaikomas komandas.
+                // Follower'iai yra tik read-only ir leidžia šias komandas: GET, GETFF, GETFB, GETKEYS, GETKEYSPAGING
                 send_all(clientSocket, "ERR_READ_ONLY\n");
             }
         }
@@ -440,7 +436,6 @@ void Follower::HandleClient(sock_t clientSocket) {
     net_close(clientSocket);
 }
 
-/* ========= main ========= */
 
 int main(int argc, char** argv) {
     // Tikrinam argumentų skaičių:
@@ -456,7 +451,7 @@ int main(int argc, char** argv) {
         auto leaderPort = std::stoi(argv[2]);
         string dbName = argv[3];
         auto readPort = std::stoi(argv[5]);
-        int nodeId = (argc >= 7) ? std::stoi(argv[6]) : 0;  // Optional node ID
+        int nodeId = (argc >= 7) ? std::stoi(argv[6]) : 0;
 
         Follower follower(leaderHost, leaderPort, dbName, readPort, nodeId);
         follower.Run();

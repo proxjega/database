@@ -1,5 +1,6 @@
 #include "../include/leader.hpp"
 #include "../include/rules.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 
@@ -129,8 +130,7 @@ void Leader::AcceptFollowers() {
       continue;
     }
 
-    // Pass socket directly to HandleFollower - it will read HELLO first to get nodeId,
-    // then find/reuse or create a connection slot
+    // Thread'as skirt'as kalbėtis su follower'iu.
     thread(&Leader::HandleFollower, this, followerSocket).detach();
   }
 }
@@ -189,14 +189,14 @@ void Leader::HandleFollower(sock_t followerSocket) {
     {
       std::lock_guard<mutex> lock(this->mtx);
 
-      // Search for existing slot with this nodeId
+      // Ieškome egzistuojančios vietos su duotu nodeId.
       auto iterator = std::find_if(this->followers.begin(), this->followers.end(),
         [nodeId](const auto& follower) {
           return follower->id == nodeId && nodeId != 0;
         });
 
       if (iterator != this->followers.end()) {
-        // Found existing slot - reuse it
+        // Radome egzistuojančia vietą, ją ir naudojame.
         follower = *iterator;
 
         if (follower->isAlive) {
@@ -208,13 +208,13 @@ void Leader::HandleFollower(sock_t followerSocket) {
           }
         }
 
-        // Update socket and mark alive
+        // Atnaujiname socket'ą ir pažymime kaip gyvą.
         follower->followerSocket = followerSocket;
         follower->isAlive = true;
         follower->ackedUptoLsn = lastAppliedLsn;
         follower->lastSeenMs = now_ms();
       } else {
-        // No existing slot - create new one
+        // Nėra vietos. Kūriame naują.
         follower = std::make_shared<FollowerConnection>();
         follower->id = nodeId;
         follower->followerSocket = followerSocket;
@@ -278,10 +278,14 @@ void Leader::HandleFollower(sock_t followerSocket) {
     }
   } catch (const std::exception& ex) {
     log_line(LogLevel::ERROR, string("Exception in follower_thread: ") + ex.what());
-    if (follower) follower->isAlive = false;
+    if (follower) {
+      follower->isAlive = false;
+    }
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown exception in follower_thread");
-    if (follower) follower->isAlive = false;
+    if (follower) {
+      follower->isAlive = false;
+    }
   }
 }
 
@@ -359,7 +363,7 @@ void Leader::ServeClients() {
 }
 
 void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
-  // Check quorum before accepting write operations
+  // Tikriname Quarum'ą prieš priimant WRITE operacijas.
   if (!HasQuorum()) {
     send_all(clientSocket, "ERR_NO_QUORUM Insufficient nodes for write operation (need 3+ nodes)\n");
     log_line(LogLevel::WARN, "Rejected SET operation: no quorum (alive followers: " +
@@ -385,7 +389,7 @@ void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
     this->BroadcastWalRecord(walRecord);
     this->WaitForAcks(newLsn);
 
-    // Verify we received enough ACKs for quorum
+    // Patvirtiname, kad gavome užtektinai ACK iš Quarum'o.
     size_t actualAcks = this->CountAcks(newLsn);
     if (actualAcks < static_cast<size_t>(this->requiredAcks)) {
       log_line(LogLevel::ERROR, "SET operation failed: insufficient ACKs (got " +
@@ -402,7 +406,7 @@ void Leader::HandleSet(sock_t clientSocket, const vector<string> &tokens) {
 }
 
 void Leader::HandleDel(sock_t clientSocket, const vector<string> &tokens) {
-  // Check quorum before accepting write operations
+  // Tikriname Quarum'ą prieš priimant WRITE operacijas.
   if (!HasQuorum()) {
     send_all(clientSocket, "ERR_NO_QUORUM Insufficient nodes for delete operation (need 3+ nodes)\n");
     log_line(LogLevel::WARN, "Rejected DEL operation: no quorum (alive followers: " +
@@ -420,7 +424,7 @@ void Leader::HandleDel(sock_t clientSocket, const vector<string> &tokens) {
     this->BroadcastWalRecord(walRecord);
     this->WaitForAcks(newLsn);
 
-    // Verify we received enough ACKs for quorum
+    // Patvirtiname, kad gavome užtektinai ACK iš Quarum'o.
     size_t actualAcks = this->CountAcks(newLsn);
     if (actualAcks < static_cast<size_t>(this->requiredAcks)) {
       log_line(LogLevel::ERROR, "DEL operation failed: insufficient ACKs (got " +
@@ -471,17 +475,11 @@ void Leader::HandleOptimize(sock_t clientSocket) {
 
 void Leader::HandleGetKeys(sock_t clientSocket, const vector<string>& tokens) {
   try {
-    // GETKEYS [prefix]
     // If no prefix provided (tokens.size() == 1), get all keys
     // If prefix provided (tokens.size() >= 2), get keys with that prefix
     string prefix = (tokens.size() >= 2) ? tokens[1] : "";
 
-    vector<string> keys;
-    if (prefix.empty()) {
-      keys = this->duombaze->GetKeys();
-    } else {
-      keys = this->duombaze->GetKeys(prefix);
-    }
+    auto keys = prefix.empty() ? this->duombaze->GetKeys() : this->duombaze->GetKeys(prefix);
 
     for (const auto& key : keys) {
       send_all(clientSocket, "KEY " + key + "\n");
@@ -500,10 +498,10 @@ void Leader::HandleGetKeysPaging(sock_t clientSocket, const vector<string>& toke
 
     auto result = this->duombaze->GetKeysPaging(pageSize, pageNum);
 
-    // Send total count first
+    // Pirma siunčiame bendrą raktų kiekį.
     send_all(clientSocket, "TOTAL " + std::to_string(result.totalItems) + "\n");
 
-    // Send each key
+    // Siunčiame kiekvieną raktą.
     for (const auto& key : result.keys) {
       send_all(clientSocket, "KEY " + key + "\n");
     }
@@ -544,11 +542,6 @@ int Leader::CountAliveFollowers() {
     int count = 0;
 
     for (const auto& follower : this->followers) {
-        // Count follower as alive based on connection status
-        // The isAlive flag is actively maintained by the follower thread:
-        // - Set to true when follower connects (HandleFollowerConnection)
-        // - Set to false when recv_line fails (connection drops)
-        // This is more reliable than time-based checks when there are no writes
         if (follower->isAlive) {
             count++;
         }
@@ -558,8 +551,6 @@ int Leader::CountAliveFollowers() {
 }
 
 bool Leader::HasQuorum() {
-    // Quorum requires >= 3 nodes total (leader + 2 followers)
-    // So we need at least 2 alive followers
     return CountAliveFollowers() >= 2;
 }
 
@@ -676,20 +667,19 @@ void Leader::HandleClient(sock_t clientSocket) {
       } else if (command == "GETKEYSPAGING" && tokens.size() == 3) {
         this->HandleGetKeysPaging(clientSocket, tokens);
       } else if (command == "INTERNAL_FOLLOWER_STATUS") {
-        // Internal command: return follower replication status for cluster health monitoring
         std::ostringstream response;
         std::lock_guard<mutex> lock(this->mtx);
         uint64_t currentTime = now_ms();
 
         for (auto& follower : this->followers) {
-          // Report followers that are alive OR were recently seen (within cache window)
-          // This handles the designed disconnect-reconnect cycle between sync sessions
           bool recentlySeen = (currentTime - follower->lastSeenMs) < FOLLOWER_STATUS_CACHE_MS;
 
-          if (!follower->isAlive && !recentlySeen) continue;
+          if (!follower->isAlive && !recentlySeen) {
+            continue;
+          }
 
           // Report actual connection state, but show "recently seen" followers
-          string status = follower->isAlive ? "ALIVE" : "RECENT";
+          const string status = follower->isAlive ? "ALIVE" : "RECENT";
 
           response << "FOLLOWER_STATUS "
                    << follower->id << " "
