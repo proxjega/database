@@ -310,7 +310,6 @@ inline auto make_routes() {
   };
 
   // POST /api/keys/{{key}}?nodeId=N with JSON body {"value": "..."}
-  // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/set/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = string());
@@ -370,7 +369,6 @@ inline auto make_routes() {
   };
 
   // DELETE /api/keys/{{key}}?nodeId=N
-  // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/del/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = string());

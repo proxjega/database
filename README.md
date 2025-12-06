@@ -172,7 +172,7 @@ cd ../server && make clean && make all
 ```
 
 
-### Kompiliuoti B+ Tree DB
+### Kompiliuoti B+ Tree DB (nebūtina čia)
 
 ```bash
 cd btree
@@ -205,7 +205,7 @@ cd Replication
 ```bash
 cd Replication
 
-# Turint priega prie serverio, galima duomenų bazės mazagą nužudyti su ./kill.sh
+# Turint priega prie serverio, galima duomenų bazės mazagą nužudyti
 ./kill.sh
 ```
 
