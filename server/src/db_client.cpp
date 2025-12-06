@@ -298,7 +298,7 @@ DbResponse DbClient::getfb(const string& key, uint32_t count) {
                 recv(sock, &trailing_newline, 1, 0);
             }
 
-            response.results.emplace_back(key, value);
+            response.results.push_back({key, value});
         } else if (tokens[0] == "ERR") {
             // Error during range query
             string err_msg;

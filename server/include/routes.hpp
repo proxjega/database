@@ -523,9 +523,9 @@ inline auto make_routes() {
         for (size_t i = 0; i < result.results.size(); i++) {
           if (i > 0) {
             json << ",";
-            json << R"({"key":")" << json_escape(result.results[i].first) << "\","
-              << R"("value":")" << json_escape(result.results[i].second) << "\"}";
           }
+          json << R"({"key":")" << json_escape(result.results[i].first) << "\","
+              << R"("value":")" << json_escape(result.results[i].second) << "\"}";
         }
 
         json << "],\"count\":" << result.results.size() << "}";
