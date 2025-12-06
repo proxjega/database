@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdint>
 #include <stdexcept>
 #include <utility>
 #include <iostream>
@@ -15,7 +16,7 @@ namespace {
 string EscapeValue(string value) {
     for (auto &character : value) {
         if (character == '\n') {
-            character = '\0'; // Replace newline with null char (or use a placeholder like 0x1F)
+            character = '\0';
         }
     }
     return value;
@@ -66,7 +67,7 @@ WAL::WAL(const string &name, size_t MaxSegmentSizeBytes)
         // Skaitome visus WAL failus.
         auto records = this->ReadAll();
         if (!records.empty()) {
-            // Priskiriame paskutinio įrašo kaip LSN
+            // Priskiriame paskutinio įrašo LSN, kaip LSN
             this->currentSequenceNumber = records.back().lsn;
         }
 
@@ -119,8 +120,8 @@ vector<fs::path> WAL::GetAllSegments() const {
 
         if (underscoreA != string::npos && dotA != string::npos &&
             underscoreB != string::npos && dotB != string::npos) {
-                u_int64_t numA = std::stoull(filenameA.substr(underscoreA + 1, dotA - underscoreA - 1));
-                u_int64_t numB = std::stoull(filenameB.substr(underscoreB + 1, dotB - underscoreB - 1));
+                uint64_t numA = std::stoull(filenameA.substr(underscoreA + 1, dotA - underscoreA - 1));
+                uint64_t numB = std::stoull(filenameB.substr(underscoreB + 1, dotB - underscoreB - 1));
                 return numA < numB;
         }
         return false;
@@ -260,22 +261,9 @@ bool WAL::LogSet(const string &key, const string &value) {
         }
     }
 
-    WalRecord record(GetNextSequenceNumber(), WalOperation::SET, key, value);
+    WalRecord record(this->GetNextSequenceNumber(), WalOperation::SET, key, value);
 
-    // Gauname dabartinę poziciją/vietą nuo kurios bus rašomą i WAL.
-    auto startPos = this->walFile.tellp();
-
-    // Log'iname ir iškarto flush'iname į WAL'ą (.log failą).
-    this->walFile << record.lsn << "|SET|" << record.key << "|" << EscapeValue(record.value) << "\n";
-    this->walFile.flush();
-
-    // Gauname dabartinę poziciją/vietą į kurią būtų rašoma. (Kitaip, vieta faile, kurioje buvo pabaigta rašyti).
-    auto endPos = this->walFile.tellp();
-
-    // Pridedamame prie dabartinio WAL dydžio skirtumą tarp vietos, kurioje buvo baigta rašyti/log'inti ir vietos nuo kurios buvo pradėta rašyti/log'inti.
-    this->currentSegmentSize += (endPos - startPos);
-
-    return !this->walFile.fail();
+    return this->WriteRecordToStream(record);
 }
 
 /**
@@ -295,22 +283,9 @@ bool WAL::LogDelete(const string &key) {
         }
     }
 
-    WalRecord record(GetNextSequenceNumber(), WalOperation::DELETE, key);
+    WalRecord record(this->GetNextSequenceNumber(), WalOperation::DELETE, key);
 
-    // Gauname dabartinę poziciją/vietą nuo kurios bus rašomą i WAL.
-    auto startPos = this->walFile.tellp();
-
-    // Log'iname ir iškarto flush'iname į WAL'ą (.log failą).
-    this->walFile << record.lsn << "|DELETE|" << record.key << "\n";
-    this->walFile.flush();
-
-    // Gauname dabartinę poziciją/vietą į kurią būtų rašoma. (Kitaip, vieta faile, kurioje buvo pabaigta rašyti).
-    auto endPos = this->walFile.tellp();
-
-    // Pridedamame prie dabartinio WAL dydžio skirtumą tarp vietos, kurioje buvo baigta rašyti/log'inti ir vietos nuo kurios buvo pradėta rašyti/log'inti.
-    this->currentSegmentSize += (endPos - startPos);
-
-    return !this->walFile.fail();
+    return this->WriteRecordToStream(record);
 }
 
 bool WAL::LogWithLSN(WalRecord &walRecord) {

@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# ⚠️  DEPRECATED - No longer needed
 #
 # This script created SSH tunnels to remote nodes.
 # The system now connects directly via Tailscale.
@@ -9,7 +8,6 @@
 
 set -e
 
-echo "⚠️  WARNING: This script is deprecated. Use direct Tailscale connections instead."
 echo "Starting SSH tunnels to remote cluster nodes..."
 
 # Kill any existing tunnels

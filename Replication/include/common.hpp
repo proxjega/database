@@ -45,11 +45,10 @@ namespace Consts {
 
     // Networking
     static constexpr int      SOCKET_TIMEOUT_MS = 5000;
-    static constexpr int      WINSOCK_VER_MAJOR = 2;
-    static constexpr int      WINSOCK_VER_MINOR = 2;
     static constexpr int      LISTEN_BACKLOG    = 16;   // Default backlog for tcp_listen
     static constexpr int      NET_OPT_ENABLE    = 1;    // Value to enable socket options (setsockopt)
     static constexpr size_t   RECV_CHUNK_SIZE   = 1;    // Bytes to read at a time in recv_line
+    static constexpr int      BIND_READONLY_RETRIES = 35;
 
     static constexpr int      MAX_PORT_NUMBER = 65535;
 }

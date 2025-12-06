@@ -1,8 +1,10 @@
 #pragma once
-#include "../../Replication/include/common.hpp"
+#include <cstdint>
 #include <string>
-#include <optional>
 #include <vector>
+
+using std::string;
+using std::vector;
 
 /**
  * DbResponse - Response structure from database operations
@@ -10,10 +12,10 @@
  */
 struct DbResponse {
     bool success;
-    std::string value;  // For single GET operations
-    std::string error;  // Error message if success=false
-    std::vector<std::pair<std::string, std::string>> results;  // For range queries
-    std::vector<std::string> keys;  // For key-only queries (prefix, paging)
+    string value;  // For single GET operations
+    string error;  // Error message if success=false
+    vector<std::pair<string, string>> results;  // For range queries
+    vector<string> keys;  // For key-only queries (prefix, paging)
     uint32_t totalCount;  // For paging queries
 };
 
@@ -27,14 +29,14 @@ struct DbResponse {
  */
 class DbClient {
 private:
-    std::string leader_host;
+    string leader_host;
     uint16_t leader_port;
 
     /**
      * Helper: Send request and get single-line response
      * Handles connection errors and basic error responses
      */
-    DbResponse send_simple_request(const std::string& command);
+    DbResponse send_simple_request(const string& command);
 
 public:
     /**
@@ -42,14 +44,14 @@ public:
      * @param initial_host - Leader host (or any cluster node for auto-detection)
      * @param port - Leader client port (default 7001)
      */
-    DbClient(const std::string& initial_host, uint16_t port);
+    DbClient(const string& initial_host, uint16_t port);
 
     /**
      * GET operation
      * @param key - Key to retrieve
      * @return DbResponse with value or error
      */
-    DbResponse get(const std::string& key);
+    DbResponse get(const string& key);
 
     /**
      * SET operation
@@ -57,14 +59,14 @@ public:
      * @param value - Value to set
      * @return DbResponse indicating success or error
      */
-    DbResponse set(const std::string& key, const std::string& value);
+    DbResponse set(const string& key, const string& value);
 
     /**
      * DELETE operation
      * @param key - Key to delete
      * @return DbResponse indicating success or error
      */
-    DbResponse del(const std::string& key);
+    DbResponse del(const string& key);
 
     /**
      * GETFF - Forward range query
@@ -72,7 +74,7 @@ public:
      * @param count - Number of keys to retrieve
      * @return DbResponse with results vector
      */
-    DbResponse getff(const std::string& key, uint32_t count);
+    DbResponse getff(const string& key, uint32_t count);
 
     /**
      * GETFB - Backward range query
@@ -80,7 +82,7 @@ public:
      * @param count - Number of keys to retrieve
      * @return DbResponse with results vector
      */
-    DbResponse getfb(const std::string& key, uint32_t count);
+    DbResponse getfb(const string& key, uint32_t count);
 
     /**
      * OPTIMIZE - Rebuild database, removing deleted entries
@@ -93,7 +95,7 @@ public:
      * @param prefix - Prefix to search for (empty string for all keys)
      * @return DbResponse with keys vector
      */
-    DbResponse getKeysPrefix(const std::string& prefix);
+    DbResponse getKeysPrefix(const string& prefix);
 
     /**
      * Get keys with paging
@@ -107,7 +109,7 @@ public:
      * Get current leader host
      * @return Leader host string
      */
-    std::string get_leader_host() const { return leader_host; }
+    string get_leader_host() const { return leader_host; }
 
     /**
      * Get current leader port

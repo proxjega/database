@@ -60,7 +60,7 @@ test_operation() {
 echo "========================================="
 echo "PHASE 1: Initial Cluster Status"
 echo "========================================="
-cd /home/mmss/database/Replication
+cd database/Replication
 ./client status
 echo ""
 

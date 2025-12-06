@@ -1,5 +1,5 @@
 // Symbol definitions for database API routes
-#include <lithium_symbol.hh>
+#include "../lithium/single_headers/lithium_symbol.hh"
 
 #ifndef LI_SYMBOL_key
 #define LI_SYMBOL_key

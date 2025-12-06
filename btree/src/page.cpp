@@ -13,7 +13,7 @@ using std::memcpy;
 
 // ---------------- PageHeaders ----------------
 
-void PageHeader::CoutHeader()  {
+void PageHeader::CoutHeader() {
     cout << "isLeaf: " << isLeaf << "\n"
          << "pageID: " << pageID << "\n"
          << "parentPageID: " << parentPageID << "\n"
@@ -23,7 +23,7 @@ void PageHeader::CoutHeader()  {
          << "offsetToStartOfSpecialSpace: " << offsetToStartOfSpecialSpace << "\n\n";
 }
 
-void MetaPageHeader::CoutHeader(){
+void MetaPageHeader::CoutHeader() {
     cout << "rootPageID: " << rootPageID << "\n"
          << "keyNum: " << keyNumber << "\n"
          << "lastPageID: " << lastPageID << "\n"

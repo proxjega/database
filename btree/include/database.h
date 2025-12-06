@@ -15,6 +15,9 @@ class LeafPage;
 using std::string;
 namespace fs = std::filesystem;
 
+static constexpr std::size_t MAX_KEY_LENGTH = 255;
+static constexpr std::size_t MAX_VALUE_LENGTH = 2048;
+
 /**
  * @brief Main Database class. Has all of the functionality methods (get, set, remove)
  * as well as private page operations (read page, write page)
@@ -39,9 +42,6 @@ private:
     public:
     // Constructor
     explicit Database(const string &name);
-
-    static constexpr std::size_t MAX_KEY_LENGTH = 255;
-    static constexpr std::size_t MAX_VALUE_LENGTH = 2048;
 
     // Accessors
     string getName() const;
@@ -72,7 +72,6 @@ private:
 
     uint64_t GetWalSequenceNumber() const { return wal.GetCurrentSequenceNumber(); }
 
-    vector<WalRecord> ReadEntireWal() { return wal.ReadAll(); }
     vector<WalRecord> GetWalRecordsSince(uint64_t lastKnownLsn);
     void ResetLogState();
 

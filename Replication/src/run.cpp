@@ -6,17 +6,13 @@
 #include <atomic>
 #include <vector>
 #include <string>
-#include <fstream>
 #include <random>
-#include <stdexcept>
+#include <unistd.h>
+#include <csignal>
+#include <sys/wait.h>
 
-#ifdef _WIN32
-  #include <windows.h>
-#else
-  #include <unistd.h>
-  #include <signal.h>
-  #include <sys/wait.h>
-#endif
+using std::atomic;
+using std::string;
 
 // -------- Logging helpers (naudojam per log_msg) --------
 
@@ -24,7 +20,7 @@
 enum class RunLogLevel : uint8_t { DEBUG, INFO, WARN, ERROR };
 
 // Paverčia RunLogLevel į string tag'ą, pvz. "[INFO] "
-static std::string lvl_tag(RunLogLevel lvl) {
+static string lvl_tag(RunLogLevel lvl) {
   switch (lvl) {
     case RunLogLevel::DEBUG: return "[DEBUG] ";
     case RunLogLevel::INFO:  return "[INFO] ";
@@ -36,8 +32,8 @@ static std::string lvl_tag(RunLogLevel lvl) {
 
 // Wrapperis aplink log_msg, kuris prideda level tag'ą.
 // Naudojam visam run.cpp vietoj tiesioginio log_msg kvietimo.
-static void run_log(ClusterState& cs, int selfId, RunLogLevel lvl, const std::string& msg) {
-  log_msg(cs, selfId, lvl_tag(lvl) + msg);
+static void run_log(ClusterState& clusterStatus, int selfId, RunLogLevel lvl, const string& msg) {
+  log_msg(clusterStatus, selfId, lvl_tag(lvl) + msg);
 }
 
 // -------- Global cluster state --------
@@ -50,21 +46,21 @@ static int      g_self_id   = 0;
 static NodeInfo g_self_info;
 
 // Laikas (ms nuo starto) kada paskutinį kartą gavom heartbeat iš leaderio
-static std::atomic<long long> g_last_heartbeat_ms{0};
+static atomic<long long> g_last_heartbeat_ms{0};
 // Ar šiuo metu vyksta rinkimai (kad ne startint kelių election iškart)
-static std::atomic<bool>      g_election_inflight{false};
+static atomic<bool>      g_election_inflight{false};
 
 // Dabartinis term (raft-style epochos numeris)
-static std::atomic<int>      g_current_term{0};
+static atomic<int>      g_current_term{0};
 // Už ką balsavome šiame term (kandidato id arba -1 jei dar nebalsavom)
-static std::atomic<int>      g_voted_for{-1};
+static atomic<int>      g_voted_for{-1};
 // Paskutinis mūsų žinomas sequencas (pagal WAL failą)
-static std::atomic<uint64_t> g_my_last_seq{0};
+static atomic<uint64_t> g_my_last_seq{0};
 
 // Rinkimų metu: kiek balsų gavom
-static std::atomic<int> g_votes_received{0};
+static atomic<int> g_votes_received{0};
 // Rinkimų term, kuriam šiuo metu renkamas lyderis
-static std::atomic<int> g_election_term{0};
+static atomic<int> g_election_term{0};
 
 // Kiek yra narių CLUSTER masyve (klasterio dydis)
 static constexpr int CLUSTER_N =
@@ -92,7 +88,7 @@ static int random_election_timeout_ms() {
 
 // -------- lastSeq helpers --------
 
-static std::string my_db_name() {
+static string my_db_name() {
     return "node" + std::to_string(g_self_id);
 }
 
@@ -102,8 +98,8 @@ static std::string my_db_name() {
 static uint64_t compute_my_last_seq() {
     try {
         // Read LSN from database metapage (always persisted)
-        Database db(my_db_name());
-        return db.getLSN();
+        Database duombaze(my_db_name());
+        return duombaze.getLSN();
     } catch (...) {
         return 0;
     }
@@ -114,11 +110,7 @@ static uint64_t compute_my_last_seq() {
 // Struktūra, sauganti paleisto vaiko informaciją (leader/follower binaras).
 struct Child {
   bool running{false};
-#ifdef _WIN32
-  PROCESS_INFORMATION pi{};
-#else
   pid_t pid{-1};
-#endif
 };
 
 // Patikrina ar child procesas vis dar gyvas.
@@ -126,43 +118,20 @@ static bool child_alive(Child &child) {
   if (!child.running) {
     return false;
   }
-#ifdef _WIN32
-  DWORD code = 0;
-  if (GetExitCodeProcess(child.pi.hProcess, &code))
-    return code == STILL_ACTIVE;
-  return false;
-#else
   int status = 0;
-  pid_t r = waitpid(child.pid, &status, WNOHANG);
-  return r == 0; // 0 – procesas dar gyvas
-#endif
+  pid_t processID = waitpid(child.pid, &status, WNOHANG);
+  return processID == 0; // 0 – procesas dar gyvas
 }
 
 // Global child process handle (leader or follower)
 static Child g_child;
 
 // Paleidžia naują procesą su komandą cmd ir užpildo Child struktūrą.
-static bool start_process(const std::string &cmd, Child &child) {
-#ifdef _WIN32
-  STARTUPINFOA si{};
-  si.cb = sizeof(si);
-  si.dwFlags = STARTF_USESHOWWINDOW;
-  si.wShowWindow = SW_SHOWNORMAL;
-
-  std::string mutableCmd = cmd;
-  BOOL ok = CreateProcessA(nullptr, mutableCmd.data(), nullptr, nullptr, FALSE,
-                           CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP,
-                           nullptr, nullptr, &si, &child.pi);
-  if (ok) {
-    child.running = true;
-    return true;
-  }
-  return false;
-#else
+static bool start_process(const string &cmd, Child &child) {
   pid_t pid = fork();
   if (pid == 0) {
     // Vaiko procese – paleidžiam shell ir exe
-    std::string execCmd = "exec " + cmd;
+    string execCmd = "exec " + cmd;
     execl("/bin/sh", "sh", "-c", execCmd.c_str(), (char*)nullptr);
     _exit(127); // jei execl nepavyko
   } else if (pid > 0) {
@@ -171,22 +140,21 @@ static bool start_process(const std::string &cmd, Child &child) {
     child.running = true;
     return true;
   }
-  return false;
-#endif
+    return false;
 }
 
-// Saugiai stabdo vaiką (siunčia SIGTERM/SIGKILL arba TerminateProcess ant Windows).
+// Saugiai stabdo vaiką (siunčia SIGTERM/SIGKILL).
 static void stop_process(Child& child) {
   if (!child.running) {
     return;
   }
-#ifndef _WIN32
+
   if (child.pid > 0) {
     // Force-close all sockets to break blocking recv() calls in detached threads
     // This allows SIGTERM to be processed instead of being ignored due to I/O wait
-    std::string ss_cmd = "ss -K 'sport = :7001 or sport = :7002 or sport = :7101 or sport = :7102 or sport = :7103 or sport = :7104' 2>/dev/null";
+    string ss_cmd = "ss -K 'sport = :7001 or sport = :7002 or sport = :7101 or sport = :7102 or sport = :7103 or sport = :7104' 2>/dev/null";
     int ss_result = system(ss_cmd.c_str());
-    (void)ss_result;  // Ignore failures - this is best-effort cleanup
+    (void)ss_result;  // Ignore failures
 
     // Give sockets time to close (allows threads to exit recv() and process signals)
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -198,8 +166,8 @@ static void stop_process(Child& child) {
     bool proccessDied = false;
     for (int i = 0; i < 10; ++i) {
       int status = 0;
-      auto r = waitpid(child.pid, &status, WNOHANG);
-      if (r == child.pid) {
+      auto processID = waitpid(child.pid, &status, WNOHANG);
+      if (processID == child.pid) {
         proccessDied = true;
         break;
       }
@@ -232,12 +200,6 @@ static void stop_process(Child& child) {
       waitpid(child.pid, nullptr, 0); // Laukiam kol tikrai dings iš sistemos lentelės
     }
   }
-#else
-  TerminateProcess(child.pi.hProcess, 0);
-  WaitForSingleObject(child.pi.hProcess, INFINITE);
-  CloseHandle(child.pi.hThread);
-  CloseHandle(child.pi.hProcess);
-#endif
 
   child.running = false;
   child.pid = -1;
@@ -249,7 +211,7 @@ static void stop_process(Child& child) {
 // (HB, VOTE_REQ, VOTE_RESP) tarp run procesų.
 static void handle_conn(sock_t client_socket) {
   try {
-    std::string line;
+    string line;
     if (!recv_line(client_socket, line)) { net_close(client_socket); return; }
     auto tokens = split(trim(line), ' ');
     if (tokens.empty()) { net_close(client_socket); return; }
@@ -399,7 +361,7 @@ static void handle_conn(sock_t client_socket) {
 
       // Node's own status
       int myId = g_self_id;
-      std::string myRole = (g_cluster_state.state == NodeState::LEADER) ? "LEADER" :
+      string myRole = (g_cluster_state.state == NodeState::LEADER) ? "LEADER" :
                            (g_cluster_state.state == NodeState::CANDIDATE) ? "CANDIDATE" : "FOLLOWER";
       uint64_t myTerm = g_current_term.load();
       int leaderId = g_effective_leader;
@@ -418,7 +380,7 @@ static void handle_conn(sock_t client_socket) {
           send_all(leader_sock, "INTERNAL_FOLLOWER_STATUS\n");
 
           // Read follower status lines
-          std::string follower_line;
+          string follower_line;
           while (recv_line(leader_sock, follower_line)) {
             follower_line = trim(follower_line);
             if (follower_line == "END") break;
@@ -442,7 +404,7 @@ static void handle_conn(sock_t client_socket) {
     net_close(client_socket);
   } catch (const std::exception& ex) {
     run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
-            std::string("exception in handle_conn: ") + ex.what());
+            string("exception in handle_conn: ") + ex.what());
     net_close(client_socket);
   } catch (...) {
     run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
@@ -471,7 +433,7 @@ static void listen_loop() {
     net_close(listen_socket);
   } catch (const std::exception& ex) {
     run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
-            std::string("exception in listen_loop: ") + ex.what());
+            string("exception in listen_loop: ") + ex.what());
   } catch (...) {
     run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
             "unknown exception in listen_loop");
@@ -511,7 +473,7 @@ static void leader_heartbeat() {
     }
   } catch (const std::exception& ex) {
     run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
-            std::string("exception in leader_heartbeat: ") + ex.what());
+            string("exception in leader_heartbeat: ") + ex.what());
   } catch (...) {
     run_log(g_cluster_state, g_self_id, RunLogLevel::ERROR,
             "unknown exception in leader_heartbeat");
@@ -561,18 +523,20 @@ static void start_election() {
   // Išsiunčiam VOTE_REQ visiems kitiems (net jei jų nepasiekiam)
   int reachable_nodes = 1; // save skaičiuojam
   for (auto& node : CLUSTER) {
-    if (node.id == g_self_id) continue;
+    if (node.id == g_self_id) {
+      continue;
+    }
 
-    sock_t s = tcp_connect(node.host, node.port);
-    if (s != NET_INVALID) {
+    sock_t sock = tcp_connect(node.host, node.port);
+    if (sock != NET_INVALID) {
       reachable_nodes++;
       send_all(
-        s,
+        sock,
         "VOTE_REQ " + std::to_string(g_current_term.load()) + " " +
         std::to_string(g_self_id) + " " +
         std::to_string(g_my_last_seq.load()) + "\n"
       );
-      net_close(s);
+      net_close(sock);
     } else {
       run_log(
         g_cluster_state,
@@ -704,7 +668,7 @@ static void follower_monitor() {
 // atitinkamą child procesą: leader arba follower.
 static void role_process_manager() {
     NodeState lastRole = NodeState::FOLLOWER;
-    std::string dbName = my_db_name();
+    string dbName = my_db_name();
 
     while (g_cluster_state.alive) {
         NodeState currentRole = g_cluster_state.state.load();
@@ -728,7 +692,7 @@ static void role_process_manager() {
             if (!child_alive(g_child)) {
                 const int requiredAcks = (CLUSTER_N / 2); // e.g. 2 for 4 nodes
 
-                std::string cmd = "./leader " +
+                string cmd = "./leader " +
                                   std::to_string(CLIENT_PORT) + " " +
                                   std::to_string(REPL_PORT)   + " " +
                                   dbName + " " +
@@ -748,11 +712,11 @@ static void role_process_manager() {
                     // ensured it's dead, so this will trigger a spawn.
                     if (!child_alive(g_child)) {
 
-                        std::string followerLog  = dbName;
-                        std::string followerSnap = "f" + std::to_string(g_self_id) + ".snap";
+                        string followerLog  = dbName;
+                        string followerSnap = "f" + std::to_string(g_self_id) + ".snap";
                         uint16_t    readPort     = FOLLOWER_READ_PORT(g_self_id);
 
-                        std::string cmd = "./follower " +
+                        string cmd = "./follower " +
                                           leaderNode->host + " " +
                                           std::to_string(REPL_PORT) + " " +
                                           followerLog  + " " +
@@ -780,17 +744,17 @@ static void cleanup_stale_processes() {
     // We redirect stderr to /dev/null so we don't see errors if no process was running.
 
     // Kill process holding the CLIENT_PORT
-    std::string cmd1 = "fuser -k -n tcp " + std::to_string(CLIENT_PORT) + " >/dev/null 2>&1";
+    string cmd1 = "fuser -k -n tcp " + std::to_string(CLIENT_PORT) + " >/dev/null 2>&1";
     system(cmd1.c_str());
 
     // Kill process holding the REPLICATION PORT (if different)
-    std::string cmd2 = "fuser -k -n tcp " + std::to_string(REPL_PORT) + " >/dev/null 2>&1";
+    string cmd2 = "fuser -k -n tcp " + std::to_string(REPL_PORT) + " >/dev/null 2>&1";
     system(cmd2.c_str());
 
     // Kill process holding the FOLLOWER READ PORT (if specific to this node)
     // Note: If FOLLOWER_READ_PORT depends on g_self_id, this works because we call it after ID parsing
     uint16_t readPort = FOLLOWER_READ_PORT(g_self_id);
-    std::string cmd3 = "fuser -k -n tcp " + std::to_string(readPort) + " >/dev/null 2>&1";
+    string cmd3 = "fuser -k -n tcp " + std::to_string(readPort) + " >/dev/null 2>&1";
     system(cmd3.c_str());
 
     // Wait briefly for the OS to release the file descriptors
@@ -816,7 +780,7 @@ int main(int argc, char** argv) {
 
     g_self_id = idTmp;
     const NodeInfo* me = getNode(g_self_id);
-    if (!me) {
+    if (me == nullptr) {
       std::cerr << "bad node id\n";
       return 1;
     }

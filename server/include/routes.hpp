@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-#include <lithium_http_server.hh>
+#include "../lithium/single_headers/lithium_http_server.hh"
 #include "symbols.hh"
 #include "db_client.hpp"
 #include "../../Replication/include/common.hpp"
@@ -14,19 +14,37 @@
 #include <iomanip>
 #include <mutex>
 
+#define ERROR_INTERNAL_SERVER_ERROR 500
+#define ERROR_NOT_FOUND 404
+#define ERROR_FORBIDDEN 401
+#define ERROR_BAD_REQUEST 400
+
+#define RESPONSE_CREATED 201
+
+#define DEFAULT_COUNT_PER_PAGE 10
+#define DEFAULT_NODE 0
+
+#define LEADER_PORT 7001
+
 using namespace li;
 
-inline bool ends_with(const std::string& str, const std::string& suffix) {
-    if (suffix.size() > str.size()) return false;
+using std::string;
+
+inline bool ends_with(const string& str, const string& suffix) {
+    if (suffix.size() > str.size()) {
+      return false;
+    }
     return str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
 // Helper function to discover current leader from cluster
 // Uses same logic as ./client leader command
 
-static inline bool parse_host_port(const std::string& host_port, std::string& host_out, uint16_t& port_out) {
+static inline bool parse_host_port(const string& host_port, string& host_out, uint16_t& port_out) {
   size_t colon_pos = host_port.find(':');
-  if (colon_pos == std::string::npos) return false;
+  if (colon_pos == string::npos) {
+    return false;
+  }
 
   host_out = host_port.substr(0, colon_pos);
   try {
@@ -39,16 +57,16 @@ static inline bool parse_host_port(const std::string& host_port, std::string& ho
 
 // CONTROL_PLANE_TUNNEL_MAP: Direct Tailscale connections (no translation needed)
 // Used by cluster/status to query node status via direct Tailscale network
-static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
+static const std::unordered_map<string, string> CONTROL_PLANE_TUNNEL_MAP = {
   {"100.117.80.126:8001", "100.117.80.126:8001"}, // Node 1 control plane (direct)
   {"100.70.98.49:8002",   "100.70.98.49:8002"},   // Node 2 control plane (direct)
   {"100.118.80.33:8003",  "100.118.80.33:8003"},  // Node 3 control plane (direct)
   {"100.116.151.88:8004", "100.116.151.88:8004"}  // Node 4 control plane (direct)
 };
 
-inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_port) {
+inline bool discover_leader_from_cluster(string& out_host, uint16_t& out_port) {
   // CLUSTER_NODES: Direct Tailscale connections to remote nodes on port 7001
-  const std::vector<std::string> CLUSTER_NODES = {
+  const std::vector<string> CLUSTER_NODES = {
     "100.117.80.126:7001",  // Node 1
     "100.70.98.49:7001",    // Node 2
     "100.118.80.33:7001",   // Node 3
@@ -58,26 +76,28 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
   // Tier 1: REDIRECT probe on follower client ports (direct Tailscale connection)
   for (const auto& node_host_port_str : CLUSTER_NODES) {
 
-    std::string node_host;
+    string node_host;
     uint16_t node_port;
-    if (!parse_host_port(node_host_port_str, node_host, node_port)) continue;
+    if (!parse_host_port(node_host_port_str, node_host, node_port)) {
+      continue;
+    }
 
     // Connect directly to node via Tailscale
-    sock_t s = tcp_connect(node_host, node_port);
+    sock_t sock = tcp_connect(node_host, node_port);
 
-    if (s != NET_INVALID) {
+    if (sock != NET_INVALID) {
       // Set timeout on follower socket too
-      set_socket_timeouts(s, 500);
+      set_socket_timeouts(sock, 500);
 
-      send_all(s, "SET __probe__ 1\n");  // Non-GET triggers REDIRECT
+      send_all(sock, "SET __probe__ 1\n");  // Non-GET triggers REDIRECT
 
-      std::string response;
-      if (recv_line(s, response)) {
+      string response;
+      if (recv_line(sock, response)) {
         auto tokens = split(trim(response), ' ');
         if (tokens.size() >= 3 && tokens[0] == "REDIRECT") {
-          std::string redirect_host = tokens[1];    // Tailscale IP of leader
+          const string& redirect_host = tokens[1];    // Tailscale IP of leader
           uint16_t redirect_port = std::stoi(tokens[2]); // Port (7001)
-          net_close(s);
+          net_close(sock);
 
           // Verify the REDIRECT target (direct connection, no translation needed)
           sock_t verify_s = tcp_connect(redirect_host, redirect_port);
@@ -88,7 +108,7 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
 
             // Send a test command to verify it responds
             send_all(verify_s, "GET __verify__\n");
-            std::string verify_response;
+            string verify_response;
 
             if (recv_line(verify_s, verify_response)) {
               auto verify_tokens = split(trim(verify_response), ' ');
@@ -108,37 +128,39 @@ inline bool discover_leader_from_cluster(std::string& out_host, uint16_t& out_po
           }
         }
       }
-      net_close(s);
+      net_close(sock);
     }
   }
 
   // Tier 2: Direct leader verification
   // Check if node is not only open, but actually responds as a leader
   for (const auto& node_host_port_str : CLUSTER_NODES) {
-    std::string node_host;
+    string node_host;
     uint16_t node_port;
-    if (!parse_host_port(node_host_port_str, node_host, node_port)) continue;
+    if (!parse_host_port(node_host_port_str, node_host, node_port)) {
+      continue;
+    }
 
-    sock_t s = tcp_connect(node_host, node_port); // Direct Tailscale connection
-    if (s != NET_INVALID) {
+    sock_t sock = tcp_connect(node_host, node_port); // Direct Tailscale connection
+    if (sock != NET_INVALID) {
       // Set aggressive 500ms timeout to quickly detect dead/unresponsive leaders
-      set_socket_timeouts(s, 500);
+      set_socket_timeouts(sock, 500);
 
       // Send a test GET command to verify it's actually a functioning leader
-      send_all(s, "GET __health_check__\n");
+      send_all(sock, "GET __health_check__\n");
 
-      std::string response;
-      if (recv_line(s, response)) {
+      string response;
+      if (recv_line(sock, response)) {
         auto tokens = split(trim(response), ' ');
         // Leader should respond with either VALUE or NOT_FOUND, not REDIRECT or ERR
         if (tokens.size() > 0 && (tokens[0] == "VALUE" || tokens[0] == "NOT_FOUND")) {
           out_host = node_host;
           out_port = node_port;
-          net_close(s);
+          net_close(sock);
           return true;
         }
       }
-      net_close(s);
+      net_close(sock);
     }
   }
 
@@ -156,7 +178,7 @@ inline uint64_t get_timestamp_ms() {
 // Returns true on success, false if nodeId is invalid
 // requireLeader: true = write operation (must target leader on CLIENT_PORT)
 //                false = read operation (can target any node, followers use FOLLOWER_READ_PORT)
-inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_port, bool requireLeader = false) {
+inline bool get_target_node(int nodeId, string& out_host, uint16_t& out_port, bool requireLeader = false) {
   if (nodeId > 0 && nodeId <= 4) {
     // Route to specific node
     const auto& node = CLUSTER[nodeId - 1];
@@ -164,7 +186,7 @@ inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_por
 
     if (requireLeader) {
       // Write operation: must go to leader on CLIENT_PORT (7001)
-      std::string leader_host;
+      string leader_host;
       uint16_t leader_port;
       if (!discover_leader_from_cluster(leader_host, leader_port)) {
         return false;  // Failed to discover leader
@@ -175,7 +197,7 @@ inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_por
       out_port = CLIENT_PORT;  // Leader uses CLIENT_PORT (7001)
     } else {
       // Read operation: determine port based on whether node is leader or follower
-      std::string leader_host;
+      string leader_host;
       uint16_t leader_port;
 
       if (discover_leader_from_cluster(leader_host, leader_port) && out_host == leader_host) {
@@ -187,24 +209,25 @@ inline bool get_target_node(int nodeId, std::string& out_host, uint16_t& out_por
       }
     }
     return true;
-  } else if (nodeId == 0) {
+  }
+
+  if (nodeId == 0) {
     // Auto-discover leader (default behavior)
     if (discover_leader_from_cluster(out_host, out_port)) {
       out_port = CLIENT_PORT;  // Leader always on CLIENT_PORT
       return true;
     }
     return false;
-  } else {
-    // Invalid nodeId
-    return false;
   }
+  // Invalid nodeId
+  return false;
 }
 
 /**
  * Properly escape JSON strings to handle special characters
  * Escapes: " \ \b \f \n \r \t and control characters
  */
-inline std::string json_escape(const std::string& str) {
+inline string json_escape(const string& str) {
   std::ostringstream escaped;
   for (char c : str) {
     switch (c) {
@@ -231,33 +254,33 @@ inline auto make_routes() {
   http_api api;
 
   // Discover leader at server startup (best-effort)
-  std::string leader_host = "100.117.80.126";  // Fallback to node1 via Tailscale
-  uint16_t leader_port = 7001;
+  string leader_host = "100.117.80.126";  // Fallback to node1 via Tailscale
+  uint16_t leader_port = LEADER_PORT;
   discover_leader_from_cluster(leader_host, leader_port);
 
-  auto db_client = std::make_shared<DbClient>(leader_host, leader_port);
+  auto db_client = std::make_shared<DbClient>(leader_host, LEADER_PORT);
 
   // GET /api/keys/{{key}}?nodeId=N - Retrieve a single key
   // Optional nodeId parameter allows reading from specific node (follower reads supported)
   api.get("/api/get/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
-      auto params = req.url_parameters(s::key = std::string());
-      std::string key = params.key;
+      auto params = req.url_parameters(s::key = string());
+      string key = params.key;
       auto query = req.get_parameters(s::nodeId = std::optional<int>());
 
       if (key.empty()) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Key parameter is required");
         return;
       }
 
       // Determine target node
-      int nodeId = query.nodeId.value_or(0);  // 0 = auto-discover leader
-      std::string target_host;
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);  // 0 = auto-discover leader
+      string target_host;
       uint16_t target_port;
 
       if (!get_target_node(nodeId, target_host, target_port, false)) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Invalid nodeId or failed to discover leader");
         return;
       }
@@ -274,15 +297,15 @@ inline auto make_routes() {
       if (result.success) {
         res.write_json(s::key = key, s::value = result.value);
       } else if (result.error == "Key not found") {
-        res.set_status(404);
+        res.set_status(ERROR_NOT_FOUND);
         res.write_json(s::error = "Key not found: " + key);
       } else {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Database error: " + result.error);
       }
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Internal error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Internal error: ") + e.what());
     }
   };
 
@@ -290,32 +313,32 @@ inline auto make_routes() {
   // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/set/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
-      auto params = req.url_parameters(s::key = std::string());
-      std::string key = params.key;
+      auto params = req.url_parameters(s::key = string());
+      string key = params.key;
       auto query = req.get_parameters(s::nodeId = std::optional<int>());
 
       if (key.empty()) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Key parameter is required");
         return;
       }
 
       // Parse JSON body
-      auto body = req.post_parameters(s::value = std::string());
+      auto body = req.post_parameters(s::value = string());
 
       if (body.value.empty()) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Value is required in request body");
         return;
       }
 
       // Determine target node - SET must go to leader
-      int nodeId = query.nodeId.value_or(0);  // 0 = auto-discover leader
-      std::string target_host;
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);  // 0 = auto-discover leader
+      string target_host;
       uint16_t target_port;
 
       if (!get_target_node(nodeId, target_host, target_port, true)) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         if (nodeId > 0) {
           res.write_json(s::error = "SET operations must target the leader. Node " + std::to_string(nodeId) + " is not the leader.");
         } else {
@@ -334,15 +357,15 @@ inline auto make_routes() {
       }
 
       if (result.success) {
-        res.set_status(201);  // Created
+        res.set_status(RESPONSE_CREATED);  // Created
         res.write_json(s::key = key, s::value = body.value, s::status = "created");
       } else {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Database error: " + result.error);
       }
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Internal error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Internal error: ") + e.what());
     }
   };
 
@@ -350,23 +373,23 @@ inline auto make_routes() {
   // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/del/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
-      auto params = req.url_parameters(s::key = std::string());
-      std::string key = params.key;
+      auto params = req.url_parameters(s::key = string());
+      string key = params.key;
       auto query = req.get_parameters(s::nodeId = std::optional<int>());
 
       if (key.empty()) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Key parameter is required");
         return;
       }
 
       // Determine target node - DEL must go to leader
-      int nodeId = query.nodeId.value_or(0);  // 0 = auto-discover leader
-      std::string target_host;
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);  // 0 = auto-discover leader
+      string target_host;
       uint16_t target_port;
 
       if (!get_target_node(nodeId, target_host, target_port, true)) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         if (nodeId > 0) {
           res.write_json(s::error = "DELETE operations must target the leader. Node " + std::to_string(nodeId) + " is not the leader.");
         } else {
@@ -387,39 +410,39 @@ inline auto make_routes() {
       if (result.success) {
         res.write_json(s::key = key, s::status = "deleted");
       } else if (result.error == "Key not found") {
-        res.set_status(404);
+        res.set_status(ERROR_NOT_FOUND);
         res.write_json(s::error = "Key not found: " + key);
       } else {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Database error: " + result.error);
       }
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Internal error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Internal error: ") + e.what());
     }
   };
 
   // GET /api/range/forward/{{key}}?count=10
   api.get("/api/getff/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
-      auto params = req.url_parameters(s::key = std::string());
-      std::string key = params.key;
+      auto params = req.url_parameters(s::key = string());
+      string key = params.key;
       auto query = req.get_parameters(s::count = std::optional<int>(), s::nodeId = std::optional<int>());
 
       if (key.empty()) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Key parameter is required");
         return;
       }
 
-      uint32_t count = query.count.value_or(10);
-      int nodeId = query.nodeId.value_or(0);
+      uint32_t count = query.count.value_or(DEFAULT_COUNT_PER_PAGE);
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);
 
-      std::string targetHost;
+      string targetHost;
       uint16_t targetPort;
 
       if (!get_target_node(nodeId, targetHost, targetPort, false)) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Failed to discover database leader");
         return;
       }
@@ -438,9 +461,11 @@ inline auto make_routes() {
         json << "{\"results\":[";
 
         for (size_t i = 0; i < result.results.size(); i++) {
-          if (i > 0) json << ",";
-          json << "{\"key\":\"" << json_escape(result.results[i].first) << "\","
-               << "\"value\":\"" << json_escape(result.results[i].second) << "\"}";
+          if (i > 0) {
+            json << ",";
+          }
+          json << R"({"key":")" << json_escape(result.results[i].first) << "\","
+            << R"("value":")" << json_escape(result.results[i].second) << "\"}";
         }
 
         json << "],\"count\":" << result.results.size() << "}";
@@ -448,36 +473,36 @@ inline auto make_routes() {
         res.set_header("Content-Type", "application/json");
         res.write(json.str());
       } else {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Database error: " + result.error);
       }
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Internal error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Internal error: ") + e.what());
     }
   };
 
   // GET /api/range/backward/{{key}}?count=10
   api.get("/api/getfb/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
-      auto params = req.url_parameters(s::key = std::string());
-      std::string key = params.key;
+      auto params = req.url_parameters(s::key = string());
+      string key = params.key;
       auto query = req.get_parameters(s::count = std::optional<int>(), s::nodeId = std::optional<int>());
 
       if (key.empty()) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "Key parameter is required");
         return;
       }
 
-      uint32_t count = query.count.value_or(10);
-      int nodeId = query.nodeId.value_or(0);
+      uint32_t count = query.count.value_or(DEFAULT_COUNT_PER_PAGE);
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);
 
-      std::string targetHost;
+      string targetHost;
       uint16_t targetPort;
 
       if (!get_target_node(nodeId, targetHost, targetPort, false)) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Failed to discover database leader");
         return;
       }
@@ -496,9 +521,11 @@ inline auto make_routes() {
         json << "{\"results\":[";
 
         for (size_t i = 0; i < result.results.size(); i++) {
-          if (i > 0) json << ",";
-          json << "{\"key\":\"" << json_escape(result.results[i].first) << "\","
-               << "\"value\":\"" << json_escape(result.results[i].second) << "\"}";
+          if (i > 0) {
+            json << ",";
+            json << R"({"key":")" << json_escape(result.results[i].first) << "\","
+              << R"("value":")" << json_escape(result.results[i].second) << "\"}";
+          }
         }
 
         json << "],\"count\":" << result.results.size() << "}";
@@ -506,12 +533,12 @@ inline auto make_routes() {
         res.set_header("Content-Type", "application/json");
         res.write(json.str());
       } else {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Database error: " + result.error);
       }
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Internal error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Internal error: ") + e.what());
     }
   };
 
@@ -519,13 +546,13 @@ inline auto make_routes() {
   api.post("/api/optimize") = [db_client](http_request& req, http_response& res) {
     try {
       auto query = req.get_parameters(s::nodeId = std::optional<int>());
-      int nodeId = query.nodeId.value_or(0);
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);
 
-      std::string targetHost;
+      string targetHost;
       uint16_t targetPort;
 
       if (!get_target_node(nodeId, targetHost, targetPort, true)) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Failed to discover database leader");
         return;
       }
@@ -541,34 +568,34 @@ inline auto make_routes() {
       if (result.success) {
         res.write_json(s::status = "optimized");
       } else {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Optimize failed: " + result.error);
       }
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Internal error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Internal error: ") + e.what());
     }
   };
 
   // Test simple parameterized route
   api.get("/test/{{name}}") = [](http_request& req, http_response& res) {
-    auto params = req.url_parameters(s::name = std::string());
+    auto params = req.url_parameters(s::name = string());
     res.write("Hello " + params.name);
   };
 
   // GET /api/keys/prefix/{{prefix}} - Get keys with prefix
   api.get("/api/keys/prefix/{{prefix}}") = [db_client](http_request& req, http_response& res) {
     try {
-      auto params = req.url_parameters(s::prefix = std::string());
-      std::string prefix = params.prefix;
+      auto params = req.url_parameters(s::prefix = string());
+      string prefix = params.prefix;
       auto query = req.get_parameters(s::nodeId = std::optional<int>());
-      int nodeId = query.nodeId.value_or(0);
+      int nodeId = query.nodeId.value_or(DEFAULT_NODE);
 
-      std::string targetHost;
+      string targetHost;
       uint16_t targetPort;
 
       if (!get_target_node(nodeId, targetHost, targetPort, false)) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Failed to discover database leader");
         return;
       }
@@ -583,7 +610,7 @@ inline auto make_routes() {
 
 
       if (!response.success) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = response.error);
         return;
       }
@@ -592,14 +619,16 @@ inline auto make_routes() {
       std::ostringstream json;
       json << "{\"keys\":[";
       for (size_t i = 0; i < response.keys.size(); i++) {
-        if (i > 0) json << ",";
+        if (i > 0) {
+          json << ",";
+        }
         json << "\"" << json_escape(response.keys[i]) << "\"";
       }
       json << "]}";
 
       res.write(json.str());
     } catch (const std::exception& e) {
-      res.set_status(500);
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
       res.write_json(s::error = e.what());
     }
   };
@@ -613,18 +642,18 @@ inline auto make_routes() {
       int pageNum = query.pageNum;
 
       if (pageSize <= 0 || pageNum <= 0) {
-        res.set_status(400);
+        res.set_status(ERROR_BAD_REQUEST);
         res.write_json(s::error = "pageSize and pageNum must be positive integers");
         return;
       }
 
       int nodeId = query.nodeId;
 
-      std::string targetHost;
+      string targetHost;
       uint16_t targetPort;
 
       if (!get_target_node(nodeId, targetHost, targetPort, false)) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = "Failed to discover database leader");
         return;
       }
@@ -638,7 +667,7 @@ inline auto make_routes() {
       }
 
       if (!response.success) {
-        res.set_status(500);
+        res.set_status(ERROR_INTERNAL_SERVER_ERROR);
         res.write_json(s::error = response.error);
         return;
       }
@@ -647,14 +676,16 @@ inline auto make_routes() {
       std::ostringstream json;
       json << "{\"keys\":[";
       for (size_t i = 0; i < response.keys.size(); i++) {
-        if (i > 0) json << ",";
-        json << "\"" << json_escape(response.keys[i]) << "\"";
+        if (i > 0) {
+          json << ",";
+        }
+      json << "\"" << json_escape(response.keys[i]) << "\"";
       }
       json << "],\"totalCount\":" << response.totalCount << "}";
 
       res.write(json.str());
     } catch (const std::exception& e) {
-      res.set_status(500);
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
       res.write_json(s::error = e.what());
     }
   };
@@ -664,7 +695,7 @@ inline auto make_routes() {
   api.get("/api/cluster/nodes") = [](http_request& req, http_response& res) {
     try {
       // Discover leader to determine port assignments
-      std::string leader_host;
+      string leader_host;
       uint16_t leader_port;
       bool leader_discovered = discover_leader_from_cluster(leader_host, leader_port);
 
@@ -673,7 +704,9 @@ inline auto make_routes() {
 
       for (size_t i = 0; i < sizeof(CLUSTER)/sizeof(NodeInfo); i++) {
         const auto& node = CLUSTER[i];
-        if (i > 0) json << ",";
+        if (i > 0) {
+          json << ",";
+        }
 
         // Determine client port: leader uses 7001, followers use 7101-7104
         uint16_t clientPort = CLIENT_PORT;
@@ -683,8 +716,8 @@ inline auto make_routes() {
 
         json << "{"
              << "\"id\":" << node.id << ","
-             << "\"name\":\"Node " << node.id << " (" << node.host << ")\","
-             << "\"host\":\"" << node.host << "\","
+             << R"("name":"Node )" << node.id << " (" << node.host << ")\","
+             << R"("host":")" << node.host << "\","
              << "\"clientPort\":" << clientPort << ","
              << "\"controlPort\":" << node.port
              << "}";
@@ -695,8 +728,8 @@ inline auto make_routes() {
       res.set_header("Content-Type", "application/json");
       res.write(json.str());
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Failed to get cluster nodes: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Failed to get cluster nodes: ") + e.what());
     }
   };
 
@@ -706,7 +739,7 @@ inline auto make_routes() {
     try {
       // Cache to reduce control plane load
       static std::mutex cacheMutex;
-      static std::string cachedResponse;
+      static string cachedResponse;
       static uint64_t cacheTimestamp = 0;
       static constexpr uint64_t CACHE_TTL_MS = 2000;  // 2 second cache
 
@@ -731,20 +764,22 @@ inline auto make_routes() {
 
       int leaderCount = 0;
       int leaderId = 0;
-      std::string leaderHost;
+      string leaderHost;
 
       for (size_t i = 0; i < sizeof(CLUSTER)/sizeof(NodeInfo); i++) {
         const auto& node = CLUSTER[i];
 
-        if (i > 0) json << ",";
+        if (i > 0) {
+          json << ",";
+        }
         json << "{";
         json << "\"id\":" << node.id << ",";
-        json << "\"host\":\"" << node.host << "\",";
+        json << R"("host":")" << node.host << "\",";
         json << "\"port\":" << node.port << ",";
 
         // Query control plane - use tunnel if available
-        std::string controlKey = std::string(node.host) + ":" + std::to_string(node.port);
-        std::string connectHost = node.host;
+        string controlKey = string(node.host) + ":" + std::to_string(node.port);
+        string connectHost = node.host;
         uint16_t connectPort = node.port;
 
         auto it = CONTROL_PLANE_TUNNEL_MAP.find(controlKey);
@@ -753,29 +788,33 @@ inline auto make_routes() {
           parse_host_port(it->second, connectHost, connectPort);
         }
 
-        sock_t s = tcp_connect(connectHost, connectPort);
-        if (s == NET_INVALID) {
-          json << "\"status\":\"OFFLINE\",\"role\":\"UNREACHABLE\"";
+        sock_t sock = tcp_connect(connectHost, connectPort);
+        if (sock == NET_INVALID) {
+          json << R"("status":"OFFLINE","role":"UNREACHABLE")";
           json << "}";
           continue;
         }
 
-        set_socket_timeouts(s, 1000);  // 1 second timeout
-        send_all(s, "CLUSTER_STATUS\n");
+        set_socket_timeouts(sock, 1000);  // 1 second timeout
+        send_all(sock, "CLUSTER_STATUS\n");
 
-        std::string line;
-        std::string role = "UNKNOWN";
+        string line;
+        string role = "UNKNOWN";
         uint64_t term = 0;
         int nodeLeaderId = 0;
         uint64_t lsn = 0;
         long long lastHBAge = -1;
-        std::vector<std::tuple<int, std::string, uint64_t>> followers;
+        std::vector<std::tuple<int, string, uint64_t>> followers;
 
-        while (recv_line(s, line)) {
-          if (line == "END") break;
+        while (recv_line(sock, line)) {
+          if (line == "END") {
+            break;
+          }
 
           auto tokens = split(trim(line), ' ');
-          if (tokens.empty()) continue;
+          if (tokens.empty()) {
+            continue;
+          }
 
           // Format: STATUS <nodeId> <role> <term> <leaderId> <myLSN> <lastHBAge>
           if (tokens[0] == "STATUS" && tokens.size() >= 7) {
@@ -791,15 +830,15 @@ inline auto make_routes() {
             }
           } else if (tokens[0] == "FOLLOWER_STATUS" && tokens.size() >= 4) {
             int fid = std::stoi(tokens[1]);
-            std::string fstatus = tokens[2];
+            string fstatus = tokens[2];
             uint64_t flsn = std::stoull(tokens[3]);
             followers.push_back({fid, fstatus, flsn});
           }
         }
-        net_close(s);
+        net_close(sock);
 
-        json << "\"status\":\"ONLINE\",";
-        json << "\"role\":\"" << role << "\",";
+        json << R"("status":"ONLINE",)";
+        json << R"("role":")" << role << "\",";
         json << "\"term\":" << term << ",";
         json << "\"leaderId\":" << nodeLeaderId << ",";
         json << "\"lsn\":" << lsn << ",";
@@ -809,9 +848,12 @@ inline auto make_routes() {
         if (!followers.empty()) {
           json << ",\"followers\":[";
           for (size_t fi = 0; fi < followers.size(); fi++) {
-            if (fi > 0) json << ",";
+            if (fi > 0) {
+              json << ",";
+            }
+
             json << "{\"id\":" << std::get<0>(followers[fi])
-                 << ",\"status\":\"" << std::get<1>(followers[fi]) << "\""
+                 << R"(,"status":")" << std::get<1>(followers[fi]) << "\""
                  << ",\"lsn\":" << std::get<2>(followers[fi]) << "}";
           }
           json << "]";
@@ -833,7 +875,7 @@ inline auto make_routes() {
       json << "\"splitBrain\":" << (leaderCount > 1 ? "true" : "false");
       json << "}";
 
-      std::string response = json.str();
+      string response = json.str();
 
       // Update cache
       {
@@ -846,25 +888,25 @@ inline auto make_routes() {
       res.set_header("X-Cache", "MISS");
       res.write(response);
     } catch (const std::exception& e) {
-      res.set_status(500);
-      res.write_json(s::error = std::string("Cluster status error: ") + e.what());
+      res.set_status(ERROR_INTERNAL_SERVER_ERROR);
+      res.write_json(s::error = string("Cluster status error: ") + e.what());
     }
   };
 
   // Static file serving for Vue.js SPA (MUST BE LAST - catch-all route)
   api.get("/{{path...}}") = [](http_request& req, http_response& res) {
-    auto url_params = req.url_parameters(s::path = std::string_view());
-    std::string path(url_params.path);
+    auto url_params = req.url_parameters(s::path = string_view());
+    string path(url_params.path);
 
     // Security: prevent directory traversal
-    if (path.find("..") != std::string::npos) {
-      res.set_status(403);
+    if (path.find("..") != string::npos) {
+      res.set_status(ERROR_FORBIDDEN);
       res.write("Forbidden");
       return;
     }
 
     // Map URL to file path
-    std::string file_path = "public/" + path;
+    string file_path = "public/" + path;
 
     // Default to index.html for SPA routing (empty path)
     if (path.empty()) {
@@ -877,24 +919,38 @@ inline auto make_routes() {
       // Fallback to index.html for Vue Router (404 becomes SPA route)
       file.open("public/index.html", std::ios::binary);
       if (!file.is_open()) {
-        res.set_status(404);
+        res.set_status(ERROR_NOT_FOUND);
         res.write("Not Found");
         return;
       }
     }
 
     // Determine MIME type based on file extension
-    std::string mime_type = "text/html";
-    if (ends_with(path, ".js")) mime_type = "application/javascript";
-    else if (ends_with(path, ".css")) mime_type = "text/css";
-    else if (ends_with(path, ".json")) mime_type = "application/json";
-    else if (ends_with(path, ".png")) mime_type = "image/png";
-    else if (ends_with(path, ".jpg") || ends_with(path, ".jpeg")) mime_type = "image/jpeg";
-    else if (ends_with(path, ".svg")) mime_type = "image/svg+xml";
-    else if (ends_with(path, ".ico")) mime_type = "image/x-icon";
+    string mime_type = "text/html";
+    if (ends_with(path, ".js")) {
+      mime_type = "application/javascript";
+    }
+    else if (ends_with(path, ".css")) {
+      mime_type = "text/css";
+    }
+    else if (ends_with(path, ".json")) {
+      mime_type = "application/json";
+    }
+    else if (ends_with(path, ".png")) {
+      mime_type = "image/png";
+    }
+    else if (ends_with(path, ".jpg") || ends_with(path, ".jpeg")) {
+      mime_type = "image/jpeg";
+    }
+    else if (ends_with(path, ".svg")) {
+      mime_type = "image/svg+xml";
+    }
+    else if (ends_with(path, ".ico")) {
+      mime_type = "image/x-icon";
+    }
 
     // Read and serve file
-    std::string content((std::istreambuf_iterator<char>(file)),
+    string content((std::istreambuf_iterator<char>(file)),
                         std::istreambuf_iterator<char>());
 
     res.set_header("Content-Type", mime_type);

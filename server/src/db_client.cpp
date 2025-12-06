@@ -1,28 +1,30 @@
 #include "../include/db_client.hpp"
-#include <iostream>
+#include "../../Replication/include/common.hpp"
 
-DbClient::DbClient(const std::string& initial_host, uint16_t port)
+using std::string;
+
+DbClient::DbClient(const string& initial_host, uint16_t port)
     : leader_host(initial_host), leader_port(port) {}
 
-DbResponse DbClient::send_simple_request(const std::string& command) {
+DbResponse DbClient::send_simple_request(const string& command) {
     DbResponse response;
     response.success = false;
 
-    sock_t s = tcp_connect(leader_host, leader_port);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leader_host, leader_port);
+    if (sock == NET_INVALID) {
         response.error = "Failed to connect to database leader";
         return response;
     }
 
-    if (!send_all(s, command + "\n")) {
-        net_close(s);
+    if (!send_all(sock, command + "\n")) {
+        net_close(sock);
         response.error = "Failed to send request to database";
         return response;
     }
 
-    std::string line;
-    if (!recv_line(s, line)) {
-        net_close(s);
+    string line;
+    if (!recv_line(sock, line)) {
+        net_close(sock);
         response.error = "No response from database";
         return response;
     }
@@ -32,7 +34,7 @@ DbResponse DbClient::send_simple_request(const std::string& command) {
     auto tokens = split(line, ' ');
 
     if (tokens.empty()) {
-        net_close(s);
+        net_close(sock);
         response.error = "Empty response from database";
         return response;
     }
@@ -40,8 +42,8 @@ DbResponse DbClient::send_simple_request(const std::string& command) {
     // Handle different response types
     if (tokens[0] == "VALUE" && tokens.size() >= 3) {
         // Parse length-prefixed value: "VALUE <value_len> <value>"
-        if (!parse_length_prefixed_value(tokens, 1, s, response.value)) {
-            net_close(s);
+        if (!parse_length_prefixed_value(tokens, 1, sock, response.value)) {
+            net_close(sock);
             response.error = "Failed to parse value";
             return response;
         }
@@ -52,9 +54,11 @@ DbResponse DbClient::send_simple_request(const std::string& command) {
         response.error = "Key not found";
     } else if (tokens[0] == "ERR") {
         // Combine all error message tokens
-        std::string err_msg;
+        string err_msg;
         for (size_t i = 1; i < tokens.size(); i++) {
-            if (i > 1) err_msg += " ";
+            if (i > 1) {
+                err_msg += " ";
+            }
             err_msg += tokens[i];
         }
         response.error = err_msg.empty() ? "Database error" : err_msg;
@@ -63,43 +67,162 @@ DbResponse DbClient::send_simple_request(const std::string& command) {
         response.error = "Unexpected response: " + line;
     }
 
-    net_close(s);
+    net_close(sock);
     return response;
 }
 
-DbResponse DbClient::get(const std::string& key) {
+DbResponse DbClient::get(const string& key) {
     return send_simple_request("GET " + key);
 }
 
-DbResponse DbClient::set(const std::string& key, const std::string& value) {
-    std::string command = "SET " + key + " " + std::to_string(value.length()) + " " + value;
+DbResponse DbClient::set(const string& key, const string& value) {
+    string command = "SET " + key + " " + std::to_string(value.length()) + " " + value;
     return send_simple_request(command);
 }
 
-DbResponse DbClient::del(const std::string& key) {
+DbResponse DbClient::del(const string& key) {
     return send_simple_request("DEL " + key);
 }
 
-DbResponse DbClient::getff(const std::string& key, uint32_t count) {
+DbResponse DbClient::getff(const string& key, uint32_t count) {
     DbResponse response;
     response.success = false;
 
-    sock_t s = tcp_connect(leader_host, leader_port);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leader_host, leader_port);
+    if (sock == NET_INVALID) {
         response.error = "Failed to connect to database leader";
         return response;
     }
 
-    std::string command = "GETFF " + key + " " + std::to_string(count);
-    if (!send_all(s, command + "\n")) {
-        net_close(s);
+    string command = "GETFF " + key + " " + std::to_string(count);
+    if (!send_all(sock, command + "\n")) {
+        net_close(sock);
         response.error = "Failed to send request to database";
         return response;
     }
 
     // Read multiple KEY_VALUE lines until END
-    std::string line;
-    while (recv_line(s, line)) {
+    string line;
+    while (recv_line(sock, line)) {
+        line = trim(line);
+
+        if (line == "END") {
+            response.success = true;
+            break;
+        }
+
+        auto tokens = split(line, ' ');
+        if (tokens.size() >= 3 && tokens[0] == "KEY_VALUE") {
+            // KEY_VALUE <key> <value_len> <value...>
+            string key = tokens[1];
+            string value;
+
+            // Parse value_len to know how many bytes to read
+            size_t value_len = 0;
+            try {
+                value_len = std::stoull(tokens[2]);
+            } catch (...) {
+                response.error = "Invalid value length in KEY_VALUE";
+                net_close(sock);
+                return response;
+            }
+
+            // Reconstruct value from remaining tokens on this line
+            string reconstructed;
+            for (size_t i = 3; i < tokens.size(); i++) {
+                if (i > 3) {
+                    reconstructed += " ";
+                }
+                reconstructed += tokens[i];
+            }
+
+            // Check if we have the complete value already
+            if (reconstructed.length() == value_len) {
+                value = reconstructed;
+            } else if (reconstructed.length() > value_len) {
+                // Have more than expected, truncate
+                value = reconstructed.substr(0, value_len);
+            } else {
+                // Need to read more bytes from socket
+                // recv_line() stripped the \n, so account for it
+                size_t bytes_needed = value_len - reconstructed.length();
+                value = reconstructed;
+
+                // Add back the newline that recv_line() stripped (if value continues)
+                if (bytes_needed > 0 && reconstructed.length() > 0) {
+                    value += "\n";
+                    bytes_needed -= 1;
+                }
+
+                // Read remaining bytes directly from socket
+                if (bytes_needed > 0) {
+                    std::vector<char> buffer(bytes_needed);
+                    size_t total_read = 0;
+
+                    while (total_read < bytes_needed) {
+                        ssize_t received = recv(sock, buffer.data() + total_read,
+                                               bytes_needed - total_read, 0);
+                        if (received <= 0) {
+                            response.error = "Failed to read complete value";
+                            net_close(sock);
+                            return response;
+                        }
+                        total_read += received;
+                    }
+                    value.append(buffer.data(), bytes_needed);
+                }
+
+                // After reading the value bytes, we need to consume the trailing \n
+                // that the leader added after the value
+                char trailing_newline;
+                recv(sock, &trailing_newline, 1, 0);
+            }
+
+            response.results.push_back({key, value});
+        } else if (tokens[0] == "ERR") {
+            // Error during range query
+            string err_msg;
+            for (size_t i = 1; i < tokens.size(); i++) {
+                if (i > 1) {
+                    err_msg += " ";
+                }
+                err_msg += tokens[i];
+            }
+            response.error = err_msg.empty() ? "Database error" : err_msg;
+            net_close(sock);
+            return response;
+        }
+    }
+
+    net_close(sock);
+
+    if (!response.success && response.error.empty()) {
+        response.error = "Incomplete response from database";
+    }
+
+    return response;
+}
+
+DbResponse DbClient::getfb(const string& key, uint32_t count) {
+    DbResponse response;
+    response.success = false;
+
+    sock_t sock = tcp_connect(leader_host, leader_port);
+    if (sock == NET_INVALID) {
+        response.error = "Failed to connect to database leader";
+        return response;
+    }
+
+    string command = "GETFB " + key + " " + std::to_string(count);
+    if (!send_all(sock, command + "\n")) {
+        net_close(sock);
+        response.error = "Failed to send request to database";
+        return response;
+    }
+
+    // Read multiple KEY_VALUE lines until END
+    string line;
+    while (recv_line(sock, line)) {
         line = trim(line);
 
         if (line == "END") {
@@ -111,8 +234,8 @@ DbResponse DbClient::getff(const std::string& key, uint32_t count) {
         if (tokens.size() >= 3 && tokens[0] == "KEY_VALUE") {
             // KEY_VALUE <key> <value_len> <value...>
             // Note: value may contain spaces and/or newlines, so we need length-prefixed parsing
-            std::string k = tokens[1];
-            std::string v;
+            string key = tokens[1];
+            string value;
 
             // Parse value_len to know how many bytes to read
             size_t value_len = 0;
@@ -120,32 +243,34 @@ DbResponse DbClient::getff(const std::string& key, uint32_t count) {
                 value_len = std::stoull(tokens[2]);
             } catch (...) {
                 response.error = "Invalid value length in KEY_VALUE";
-                net_close(s);
+                net_close(sock);
                 return response;
             }
 
             // Reconstruct value from remaining tokens on this line
-            std::string reconstructed;
+            string reconstructed;
             for (size_t i = 3; i < tokens.size(); i++) {
-                if (i > 3) reconstructed += " ";
+                if (i > 3) {
+                    reconstructed += " ";
+                }
                 reconstructed += tokens[i];
             }
 
             // Check if we have the complete value already
             if (reconstructed.length() == value_len) {
-                v = reconstructed;
+                value = reconstructed;
             } else if (reconstructed.length() > value_len) {
                 // Have more than expected, truncate
-                v = reconstructed.substr(0, value_len);
+                value = reconstructed.substr(0, value_len);
             } else {
                 // Need to read more bytes from socket
                 // recv_line() stripped the \n, so account for it
                 size_t bytes_needed = value_len - reconstructed.length();
-                v = reconstructed;
+                value = reconstructed;
 
                 // Add back the newline that recv_line() stripped (if value continues)
                 if (bytes_needed > 0 && reconstructed.length() > 0) {
-                    v += "\n";
+                    value += "\n";
                     bytes_needed -= 1;
                 }
 
@@ -155,39 +280,41 @@ DbResponse DbClient::getff(const std::string& key, uint32_t count) {
                     size_t total_read = 0;
 
                     while (total_read < bytes_needed) {
-                        ssize_t received = recv(s, buffer.data() + total_read,
+                        ssize_t received = recv(sock, buffer.data() + total_read,
                                                bytes_needed - total_read, 0);
                         if (received <= 0) {
                             response.error = "Failed to read complete value";
-                            net_close(s);
+                            net_close(sock);
                             return response;
                         }
                         total_read += received;
                     }
-                    v.append(buffer.data(), bytes_needed);
+                    value.append(buffer.data(), bytes_needed);
                 }
 
                 // After reading the value bytes, we need to consume the trailing \n
                 // that the leader added after the value
                 char trailing_newline;
-                recv(s, &trailing_newline, 1, 0);
+                recv(sock, &trailing_newline, 1, 0);
             }
 
-            response.results.push_back({k, v});
+            response.results.emplace_back(key, value);
         } else if (tokens[0] == "ERR") {
             // Error during range query
-            std::string err_msg;
+            string err_msg;
             for (size_t i = 1; i < tokens.size(); i++) {
-                if (i > 1) err_msg += " ";
+                if (i > 1) {
+                    err_msg += " ";
+                }
                 err_msg += tokens[i];
             }
             response.error = err_msg.empty() ? "Database error" : err_msg;
-            net_close(s);
+            net_close(sock);
             return response;
         }
     }
 
-    net_close(s);
+    net_close(sock);
 
     if (!response.success && response.error.empty()) {
         response.error = "Incomplete response from database";
@@ -196,137 +323,21 @@ DbResponse DbClient::getff(const std::string& key, uint32_t count) {
     return response;
 }
 
-DbResponse DbClient::getfb(const std::string& key, uint32_t count) {
+DbResponse DbClient::getKeysPrefix(const string& prefix) {
     DbResponse response;
-    response.success = false;
-
-    sock_t s = tcp_connect(leader_host, leader_port);
-    if (s == NET_INVALID) {
-        response.error = "Failed to connect to database leader";
-        return response;
-    }
-
-    std::string command = "GETFB " + key + " " + std::to_string(count);
-    if (!send_all(s, command + "\n")) {
-        net_close(s);
-        response.error = "Failed to send request to database";
-        return response;
-    }
-
-    // Read multiple KEY_VALUE lines until END
-    std::string line;
-    while (recv_line(s, line)) {
-        line = trim(line);
-
-        if (line == "END") {
-            response.success = true;
-            break;
-        }
-
-        auto tokens = split(line, ' ');
-        if (tokens.size() >= 3 && tokens[0] == "KEY_VALUE") {
-            // KEY_VALUE <key> <value_len> <value...>
-            // Note: value may contain spaces and/or newlines, so we need length-prefixed parsing
-            std::string k = tokens[1];
-            std::string v;
-
-            // Parse value_len to know how many bytes to read
-            size_t value_len = 0;
-            try {
-                value_len = std::stoull(tokens[2]);
-            } catch (...) {
-                response.error = "Invalid value length in KEY_VALUE";
-                net_close(s);
-                return response;
-            }
-
-            // Reconstruct value from remaining tokens on this line
-            std::string reconstructed;
-            for (size_t i = 3; i < tokens.size(); i++) {
-                if (i > 3) reconstructed += " ";
-                reconstructed += tokens[i];
-            }
-
-            // Check if we have the complete value already
-            if (reconstructed.length() == value_len) {
-                v = reconstructed;
-            } else if (reconstructed.length() > value_len) {
-                // Have more than expected, truncate
-                v = reconstructed.substr(0, value_len);
-            } else {
-                // Need to read more bytes from socket
-                // recv_line() stripped the \n, so account for it
-                size_t bytes_needed = value_len - reconstructed.length();
-                v = reconstructed;
-
-                // Add back the newline that recv_line() stripped (if value continues)
-                if (bytes_needed > 0 && reconstructed.length() > 0) {
-                    v += "\n";
-                    bytes_needed -= 1;
-                }
-
-                // Read remaining bytes directly from socket
-                if (bytes_needed > 0) {
-                    std::vector<char> buffer(bytes_needed);
-                    size_t total_read = 0;
-
-                    while (total_read < bytes_needed) {
-                        ssize_t received = recv(s, buffer.data() + total_read,
-                                               bytes_needed - total_read, 0);
-                        if (received <= 0) {
-                            response.error = "Failed to read complete value";
-                            net_close(s);
-                            return response;
-                        }
-                        total_read += received;
-                    }
-                    v.append(buffer.data(), bytes_needed);
-                }
-
-                // After reading the value bytes, we need to consume the trailing \n
-                // that the leader added after the value
-                char trailing_newline;
-                recv(s, &trailing_newline, 1, 0);
-            }
-
-            response.results.push_back({k, v});
-        } else if (tokens[0] == "ERR") {
-            // Error during range query
-            std::string err_msg;
-            for (size_t i = 1; i < tokens.size(); i++) {
-                if (i > 1) err_msg += " ";
-                err_msg += tokens[i];
-            }
-            response.error = err_msg.empty() ? "Database error" : err_msg;
-            net_close(s);
-            return response;
-        }
-    }
-
-    net_close(s);
-
-    if (!response.success && response.error.empty()) {
-        response.error = "Incomplete response from database";
-    }
-
-    return response;
-}
-
-DbResponse DbClient::getKeysPrefix(const std::string& prefix) {
-    DbResponse response;
-    sock_t s = tcp_connect(leader_host, leader_port);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leader_host, leader_port);
+    if (sock == NET_INVALID) {
         response.success = false;
         response.error = "Failed to connect to database leader";
         return response;
     }
 
     // Send GETKEYS command with prefix (empty prefix gets all keys)
-    std::string command = "GETKEYS " + prefix + "\n";
-    send_all(s, command);
+    string command = "GETKEYS " + prefix + "\n";
+    send_all(sock, command);
 
-    std::string line;
-    while (recv_line(s, line)) {
+    string line;
+    while (recv_line(sock, line)) {
         line = trim(line);
         if (line == "END") {
             response.success = true;
@@ -342,25 +353,25 @@ DbResponse DbClient::getKeysPrefix(const std::string& prefix) {
         }
     }
 
-    net_close(s);
+    net_close(sock);
     return response;
 }
 
 DbResponse DbClient::getKeysPaging(uint32_t pageSize, uint32_t pageNum) {
     DbResponse response;
-    sock_t s = tcp_connect(leader_host, leader_port);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leader_host, leader_port);
+    if (sock == NET_INVALID) {
         response.success = false;
         response.error = "Failed to connect to database leader";
         return response;
     }
 
     // Send GETKEYSPAGING command
-    std::string command = "GETKEYSPAGING " + std::to_string(pageSize) + " " + std::to_string(pageNum) + "\n";
-    send_all(s, command);
+    string command = "GETKEYSPAGING " + std::to_string(pageSize) + " " + std::to_string(pageNum) + "\n";
+    send_all(sock, command);
 
-    std::string line;
-    while (recv_line(s, line)) {
+    string line;
+    while (recv_line(sock, line)) {
         line = trim(line);
         if (line == "END") {
             response.success = true;
@@ -378,29 +389,29 @@ DbResponse DbClient::getKeysPaging(uint32_t pageSize, uint32_t pageNum) {
         }
     }
 
-    net_close(s);
+    net_close(sock);
     return response;
 }
 
 DbResponse DbClient::optimize() {
     DbResponse response;
-    sock_t s = tcp_connect(leader_host, leader_port);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leader_host, leader_port);
+    if (sock == NET_INVALID) {
         response.success = false;
         response.error = "Failed to connect to database leader";
         return response;
     }
 
-    send_all(s, "OPTIMIZE\n");
+    send_all(sock, "OPTIMIZE\n");
 
-    std::string line;
-    if (!recv_line(s, line)) {
-        net_close(s);
+    string line;
+    if (!recv_line(sock, line)) {
+        net_close(sock);
         response.error = "No response from database";
         return response;
     }
 
-    net_close(s);
+    net_close(sock);
 
     line = trim(line);
     if (line == "OK_OPTIMIZED") {

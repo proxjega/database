@@ -11,12 +11,19 @@
 // leader – Atspausdina visus CLUSTER IP ir pažymi, kuris yra LEADER
 
 #include "../include/common.hpp"
-#include "../include/rules.hpp"   // kad matytume CLUSTER, CLIENT_PORT, FOLLOWER_READ_PORT
+#include "../include/rules.hpp"
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <iomanip>
 #include <vector>
 #include <tuple>
+
+#define LEADER_CLIENT_API_PORT 7001
+
+using std::cout;
+using std::string;
+using std::vector;
 
 /**
  * Pasiunčia vieną užklausą į duotą host:port ir, jei gauna REDIRECT atsakymą,
@@ -36,9 +43,9 @@
  * Grąžina true, jei kažkoks atsakymas sėkmingai gautas ir atspausdintas,
  * false – jei nepavyko prisijungti ar gauti atsakymo.
  */
-static bool do_request_follow_redirect(const std::string& initialHost,
+static bool do_request_follow_redirect(const string& initialHost,
                                        uint16_t initialPort,
-                                       const std::string& payload) {
+                                       const string& payload) {
   sock_t socketMain = tcp_connect(initialHost, initialPort);
   if (socketMain == NET_INVALID) {
     std::cerr << "ERR_CONNECT\n";
@@ -47,7 +54,7 @@ static bool do_request_follow_redirect(const std::string& initialHost,
 
   send_all(socketMain, payload + "\n");
 
-  std::string responseLine;
+  string responseLine;
   if (!recv_line(socketMain, responseLine)) {
     net_close(socketMain);
     std::cerr << "ERR_NO_REPLY\n";
@@ -61,8 +68,8 @@ static bool do_request_follow_redirect(const std::string& initialHost,
       responseParts[0] == "REDIRECT" &&
       responseParts.size() >= 3) {
 
-    const std::string &redirectHost = responseParts[1];
-    uint16_t redirectPort = static_cast<uint16_t>(std::stoi(responseParts[2]));
+    const string &redirectHost = responseParts[1];
+    auto redirectPort = static_cast<uint16_t>(std::stoi(responseParts[2]));
 
     net_close(socketMain);
 
@@ -74,7 +81,7 @@ static bool do_request_follow_redirect(const std::string& initialHost,
 
     send_all(socketRedirect, payload + "\n");
 
-    std::string redirectedResponse;
+    string redirectedResponse;
     if (!recv_line(socketRedirect, redirectedResponse)) {
       net_close(socketRedirect);
       std::cerr << "ERR_NO_REPLY\n";
@@ -84,14 +91,14 @@ static bool do_request_follow_redirect(const std::string& initialHost,
     // Parse length-prefixed VALUE response
     auto redirectParts = split(trim(redirectedResponse), ' ');
     if (!redirectParts.empty() && redirectParts[0] == "VALUE" && redirectParts.size() >= 2) {
-      std::string value;
+      string value;
       if (parse_length_prefixed_value(redirectParts, 1, socketRedirect, value)) {
-        std::cout << "VALUE " << value << "\n";
+        cout << "VALUE " << value << "\n";
       } else {
-        std::cout << redirectedResponse << "\n";
+        cout << redirectedResponse << "\n";
       }
     } else {
-      std::cout << redirectedResponse << "\n";
+      cout << redirectedResponse << "\n";
     }
     net_close(socketRedirect);
     return true;
@@ -99,14 +106,14 @@ static bool do_request_follow_redirect(const std::string& initialHost,
 
   // Parse length-prefixed VALUE response from initial request
   if (!responseParts.empty() && responseParts[0] == "VALUE" && responseParts.size() >= 2) {
-    std::string value;
+    string value;
     if (parse_length_prefixed_value(responseParts, 1, socketMain, value)) {
-      std::cout << "VALUE " << value << "\n";
+      cout << "VALUE " << value << "\n";
     } else {
-      std::cout << responseLine << "\n";
+      cout << responseLine << "\n";
     }
   } else {
-    std::cout << responseLine << "\n";
+    cout << responseLine << "\n";
   }
   net_close(socketMain);
   return true;
@@ -117,11 +124,11 @@ static bool do_request_follow_redirect(const std::string& initialHost,
  *
  * Pvz. "100.125.32.90:7101" -> hostOut = "100.125.32.90", portOut = 7101
  */
-static bool split_host_port(const std::string& hostPortStr,
-                            std::string& hostOut,
+static bool split_host_port(const string& hostPortStr,
+                            string& hostOut,
                             uint16_t& portOut) {
   auto colonPos = hostPortStr.find(':');
-  if (colonPos == std::string::npos) {
+  if (colonPos == string::npos) {
     return false;
   }
 
@@ -142,29 +149,29 @@ static bool split_host_port(const std::string& hostPortStr,
  * @param leaderHostOut – čia įrašomas aptiktas lyderio host.
  * @return true, jei pavyko rasti; false – jei nepavyko.
  */
-static bool detect_leader_host(std::string &leaderHostOut) {
+static bool detect_leader_host(string &leaderHostOut) {
   // Find leader by checking which node listens on CLIENT_PORT (7001)
   // Only leader binds to CLIENT_PORT, followers use FOLLOWER_READ_PORT
   for (auto& node : CLUSTER) {
-    sock_t s = tcp_connect(node.host, CLIENT_PORT);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(node.host, CLIENT_PORT);
+    if (sock == NET_INVALID) {
       continue;
     }
 
     // Verify it's actually a leader by sending a test GET command
-    set_socket_timeouts(s, 1000);  // 1 second timeout
-    send_all(s, "GET __leader_check__\n");
-    std::string line;
-    if (recv_line(s, line)) {
+    set_socket_timeouts(sock, 1000);  // 1 second timeout
+    send_all(sock, "GET __leader_check__\n");
+    string line;
+    if (recv_line(sock, line)) {
       auto parts = split(trim(line), ' ');
       // Leader responds with VALUE or NOT_FOUND, not ERR_READ_ONLY
       if (parts.size() > 0 && (parts[0] == "VALUE" || parts[0] == "NOT_FOUND")) {
-        net_close(s);
+        net_close(sock);
         leaderHostOut = node.host;
         return true;
       }
     }
-    net_close(s);
+    net_close(sock);
   }
 
   return false;
@@ -172,156 +179,160 @@ static bool detect_leader_host(std::string &leaderHostOut) {
 
 int main(int argc, char** argv) {
   // Cluster status command: ./client status or ./client leader (alias)
-  if (argc == 2 && (std::string(argv[1]) == "status" || std::string(argv[1]) == "leader")) {
-    std::cout << "=== Cluster Status ===\n\n";
+  if (argc == 2 && (string(argv[1]) == "status" || string(argv[1]) == "leader")) {
+    cout << "=== Cluster Status ===\n\n";
 
     // Query all cluster nodes
     struct NodeStatus {
       int id;
-      std::string role;
+      string role;
       uint64_t term;
       int leaderId;
       uint64_t lsn;
       long long lastHBAge;
       bool reachable;
-      std::vector<std::tuple<int, std::string, uint64_t>> followers; // id, status, lsn
+      vector<std::tuple<int, string, uint64_t>> followers; // id, status, lsn
     };
 
-    std::vector<NodeStatus> nodeStatuses;
+    vector<NodeStatus> nodeStatuses;
     int detectedLeaderId = 0;
-    std::string detectedLeaderHost;
+    string detectedLeaderHost;
 
     // Query each node's control plane port
     for (auto& node : CLUSTER) {
       uint16_t controlPort = node.port;  // Control plane port (8001-8004)
-      sock_t s = tcp_connect(node.host, controlPort);
+      sock_t sock = tcp_connect(node.host, controlPort);
 
-      if (s == NET_INVALID) {
+      if (sock == NET_INVALID) {
         // Node unreachable
-        NodeStatus ns;
-        ns.id = node.id;
-        ns.reachable = false;
-        nodeStatuses.push_back(ns);
+        NodeStatus nodeStatus;
+        nodeStatus.id = node.id;
+        nodeStatus.reachable = false;
+        nodeStatuses.push_back(nodeStatus);
         continue;
       }
 
-      set_socket_timeouts(s, 2000); // 2s timeout
-      send_all(s, "CLUSTER_STATUS\n");
+      set_socket_timeouts(sock, 2000); // 2s timeout
+      send_all(sock, "CLUSTER_STATUS\n");
 
-      NodeStatus ns;
-      ns.id = node.id;
-      ns.reachable = true;
+      NodeStatus nodeStatus;
+      nodeStatus.id = node.id;
+      nodeStatus.reachable = true;
 
-      std::string line;
-      while (recv_line(s, line)) {
+      string line;
+      while (recv_line(sock, line)) {
         line = trim(line);
-        if (line == "END") break;
+        if (line == "END") {
+          break;
+        }
 
         auto tokens = split(line, ' ');
         if (tokens.size() >= 7 && tokens[0] == "STATUS") {
           // STATUS <nodeId> <role> <term> <leaderId> <myLSN> <lastHBAge>
-          ns.role = tokens[2];
-          ns.term = std::stoull(tokens[3]);
-          ns.leaderId = std::stoi(tokens[4]);
-          ns.lsn = std::stoull(tokens[5]);
-          ns.lastHBAge = std::stoll(tokens[6]);
+          nodeStatus.role = tokens[2];
+          nodeStatus.term = std::stoull(tokens[3]);
+          nodeStatus.leaderId = std::stoi(tokens[4]);
+          nodeStatus.lsn = std::stoull(tokens[5]);
+          nodeStatus.lastHBAge = std::stoll(tokens[6]);
 
-          if (ns.role == "LEADER") {
-            detectedLeaderId = ns.id;
+          if (nodeStatus.role == "LEADER") {
+            detectedLeaderId = nodeStatus.id;
             detectedLeaderHost = node.host;
           }
         } else if (tokens.size() >= 4 && tokens[0] == "FOLLOWER_STATUS") {
           // FOLLOWER_STATUS <followerId> <status> <lsn>
           int followerId = std::stoi(tokens[1]);
-          std::string status = tokens[2];
+          string status = tokens[2];
           uint64_t followerLsn = std::stoull(tokens[3]);
-          ns.followers.push_back(std::make_tuple(followerId, status, followerLsn));
+          nodeStatus.followers.push_back(std::make_tuple(followerId, status, followerLsn));
         }
       }
 
-      net_close(s);
-      nodeStatuses.push_back(ns);
+      net_close(sock);
+      nodeStatuses.push_back(nodeStatus);
     }
 
     // Display current leader
     if (detectedLeaderId > 0) {
-      std::cout << "Current Leader: " << detectedLeaderHost << " (Node " << detectedLeaderId << ")\n\n";
+      cout << "Current Leader: " << detectedLeaderHost << " (Node " << detectedLeaderId << ")\n\n";
     } else {
-      std::cout << "⚠️  No leader detected - election in progress?\n\n";
+      cout << "No leader detected - election in progress?\n\n";
     }
 
     // Display node status table
-    std::cout << "Node Status:\n";
-    std::cout << "ID | Role      | LSN   | Status | Last HB Age\n";
-    std::cout << "---|-----------|-------|--------|------------\n";
+    cout << "Node Status:\n";
+    cout << "ID | Role      | LSN   | Status | Last HB Age\n";
+    cout << "---|-----------|-------|--------|------------\n";
 
-    for (auto& ns : nodeStatuses) {
-      std::cout << ns.id << "  | ";
+    for (auto& nodeStatus : nodeStatuses) {
+      cout << nodeStatus.id << "  | ";
 
-      if (!ns.reachable) {
-        std::cout << "UNREACHABLE\n";
+      if (!nodeStatus.reachable) {
+        cout << "UNREACHABLE\n";
         continue;
       }
 
-      std::cout << std::left << std::setw(9) << ns.role << " | "
-                << std::setw(5) << ns.lsn << " | "
+      cout << std::left << std::setw(9) << nodeStatus.role << " | "
+                << std::setw(5) << nodeStatus.lsn << " | "
                 << "ALIVE  | ";
 
-      if (ns.role == "LEADER") {
-        std::cout << "-";
+      if (nodeStatus.role == "LEADER") {
+        cout << "-";
       } else {
-        std::cout << ns.lastHBAge << "ms";
+        cout << nodeStatus.lastHBAge << "ms";
       }
-      std::cout << "\n";
+      cout << "\n";
     }
 
     // Display replication status if leader found
     bool foundLeaderWithFollowers = false;
-    for (auto& ns : nodeStatuses) {
-      if (ns.role == "LEADER" && !ns.followers.empty()) {
+    for (auto& nodeStatus : nodeStatuses) {
+      if (nodeStatus.role == "LEADER" && !nodeStatus.followers.empty()) {
         foundLeaderWithFollowers = true;
-        std::cout << "\nReplication Status:\n";
+        cout << "\nReplication Status:\n";
 
         int aliveCount = 0;
         uint64_t maxLag = 0;
 
-        for (auto& f : ns.followers) {
-          int fid = std::get<0>(f);
-          std::string fstatus = std::get<1>(f);
-          uint64_t flsn = std::get<2>(f);
+        for (auto &follower : nodeStatus.followers) {
+          int fid = std::get<0>(follower);
+          string fstatus = std::get<1>(follower);
+          uint64_t flsn = std::get<2>(follower);
 
           // Count both ALIVE and RECENT as healthy (RECENT = recently disconnected but expected to reconnect)
-          if (fstatus == "ALIVE" || fstatus == "RECENT") aliveCount++;
+          if (fstatus == "ALIVE" || fstatus == "RECENT") {
+            aliveCount++;
+          }
 
-          uint64_t lag = (ns.lsn > flsn) ? (ns.lsn - flsn) : 0;
-          if (lag > maxLag) maxLag = lag;
+          uint64_t lag = (nodeStatus.lsn > flsn) ? (nodeStatus.lsn - flsn) : 0;
+          maxLag = std::max(lag, maxLag);
 
-          std::cout << "  Node " << fid << ": " << fstatus << " (LSN " << flsn << ", lag " << lag << " entries)\n";
+          cout << "  Node " << fid << ": " << fstatus << " (LSN " << flsn << ", lag " << lag << " entries)\n";
         }
 
-        std::cout << "\nHealthy Followers: " << aliveCount << "/" << ns.followers.size() << "\n";
-        std::cout << "Max LSN Lag: " << maxLag << " entries\n";
+        cout << "\nHealthy Followers: " << aliveCount << "/" << nodeStatus.followers.size() << "\n";
+        cout << "Max LSN Lag: " << maxLag << " entries\n";
       }
     }
 
     if (!foundLeaderWithFollowers && detectedLeaderId > 0) {
-      std::cout << "\nNo follower replication data available.\n";
+      cout << "\nNo follower replication data available.\n";
     }
 
     // Split brain detection
     int leaderCount = 0;
-    std::vector<int> leaderIds;
-    for (auto& ns : nodeStatuses) {
-      if (ns.reachable && ns.role == "LEADER") {
+    vector<int> leaderIds;
+    for (auto& nodeStatus : nodeStatuses) {
+      if (nodeStatus.reachable && nodeStatus.role == "LEADER") {
         leaderCount++;
-        leaderIds.push_back(ns.id);
+        leaderIds.push_back(nodeStatus.id);
       }
     }
 
     if (leaderCount > 1) {
-      std::cout << "\n⚠️  SPLIT BRAIN DETECTED! Multiple leaders:\n";
+      cout << "\nSPLIT BRAIN DETECTED! Multiple leaders:\n";
       for (int lid : leaderIds) {
-        std::cout << "  Node " << lid << "\n";
+        cout << "  Node " << lid << "\n";
       }
     }
 
@@ -352,10 +363,10 @@ int main(int argc, char** argv) {
   }
 
   // Parse first argument - could be node alias or host
-  std::string firstArg = argv[1];
-  std::string leaderHost;
+  string firstArg = argv[1];
+  string leaderHost;
   uint16_t leaderPort;
-  std::string command;
+  string command;
   int commandArgOffset;
 
   // Check for node aliases (node1, node2, node3, node4)
@@ -369,11 +380,11 @@ int main(int argc, char** argv) {
     // Get node info from CLUSTER array
     const auto& node = CLUSTER[nodeId - 1];
     leaderHost = node.host;
-    leaderPort = 7001;  // All nodes use port 7001 for client API
+    leaderPort = LEADER_CLIENT_API_PORT;  // All nodes use port LEADER_CLIENT_API_PORT for client API
     command = (argc >= 3) ? argv[2] : "";
     commandArgOffset = 3;
 
-    std::cout << "→ Connecting to Node " << nodeId << " (" << leaderHost << ":" << leaderPort << ")\n";
+    cout << "→ Connecting to Node " << nodeId << " (" << leaderHost << ":" << leaderPort << ")\n";
   } else {
     // Traditional host:port format
     if (argc < 4) {
@@ -390,15 +401,15 @@ int main(int argc, char** argv) {
   if (command == "GET" && argc >= (commandArgOffset + 1)) {
     return do_request_follow_redirect(
              leaderHost, leaderPort,
-             "GET " + std::string(argv[commandArgOffset])
+             "GET " + string(argv[commandArgOffset])
            ) ? 0 : 1;
   }
-  // SET / PUT – rašo į lyderį (užklausos forma: "SET key <value_len> value")
-  if ((command == "SET" || command == "PUT") && argc >= (commandArgOffset + 2)) {
-    std::string key = argv[commandArgOffset];
-    std::string value = argv[commandArgOffset + 1];
+  // SET – rašo į lyderį (užklausos forma: "SET key <value_len> value")
+  if ((command == "SET") && argc >= (commandArgOffset + 2)) {
+    string key = argv[commandArgOffset];
+    string value = argv[commandArgOffset + 1];
     // Use length-prefixed format matching HTTP server implementation
-    std::string setCommand = "SET " + key + " " + std::to_string(value.length()) + " " + value;
+    string setCommand = "SET " + key + " " + std::to_string(value.length()) + " " + value;
     return do_request_follow_redirect(
              leaderHost, leaderPort,
              setCommand
@@ -408,118 +419,53 @@ int main(int argc, char** argv) {
   if (command == "DEL" && argc >= (commandArgOffset + 1)) {
     return do_request_follow_redirect(
              leaderHost, leaderPort,
-             "DEL " + std::string(argv[commandArgOffset])
+             "DEL " + string(argv[commandArgOffset])
            ) ? 0 : 1;
   }
-
-  /*
-  // SENA GETFF/GETFB follower'ių maršrutizavimo logika
-  // Dabar GETFF/GETFB yra paprastos range užklausos siunčiamos į lyderį
-  if (command == "GETFF" && argc >= 6) {
-    std::string followerHost;
-    uint16_t followerPort;
-    if (!split_host_port(argv[5], followerHost, followerPort)) {
-      std::cerr << "bad follower host:port\n";
-      return 1;
-    }
-    return do_request_follow_redirect(
-             followerHost, followerPort,
-             "GET " + std::string(argv[4])
-           ) ? 0 : 1;
-  }
-  if (command == "GETFB" && argc >= 6) {
-    std::string followerHost;
-    uint16_t followerPort;
-    if (!split_host_port(argv[5], followerHost, followerPort)) {
-      std::cerr << "bad follower host:port\n";
-      return 1;
-    }
-
-    // 1) Bandome jungtis prie followerio
-    sock_t followerSocket = tcp_connect(followerHost, followerPort);
-    if (followerSocket != NET_INVALID) {
-      send_all(followerSocket, "GET " + std::string(argv[4]) + "\n");
-
-      std::string followerReply;
-      if (recv_line(followerSocket, followerReply)) {
-        net_close(followerSocket);
-
-        if (followerReply == "NOT_FOUND") {
-          // fallback į lyderį
-          return do_request_follow_redirect(
-                   leaderHost, leaderPort,
-                   "GET " + std::string(argv[4])
-                 ) ? 0 : 1;
-        }
-        if (followerReply.rfind("REDIRECT ", 0) == 0) {
-          auto parts = split(trim(followerReply), ' ');
-          if (parts.size() >= 3) {
-            const std::string &redirectHost = parts[1];
-            uint16_t redirectPort =
-              static_cast<uint16_t>(std::stoi(parts[2]));
-
-            return do_request_follow_redirect(
-                     redirectHost, redirectPort,
-                     "GET " + std::string(argv[4])
-                   ) ? 0 : 1;
-          }
-        }
-        else {
-          std::cout << followerReply << "\n";
-          return 0;
-        }
-      } else {
-        net_close(followerSocket);
-      }
-    }
-
-    // 2) Fallback: nepavyko – per lyderį
-    return do_request_follow_redirect(
-             leaderHost, leaderPort,
-             "GET " + std::string(argv[4])
-           ) ? 0 : 1;
-  }
-  */
 
   // GETFF <key> <n> - Forward range query to leader
   if (command == "GETFF" && argc >= (commandArgOffset + 1)) {
-    std::string key = argv[commandArgOffset];
-    std::string count = (argc >= (commandArgOffset + 2)) ? argv[commandArgOffset + 1] : "10";
+    string key = argv[commandArgOffset];
+    string count = (argc >= (commandArgOffset + 2)) ? argv[commandArgOffset + 1] : "10";
 
-    sock_t s = tcp_connect(leaderHost, leaderPort);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leaderHost, leaderPort);
+    if (sock == NET_INVALID) {
       std::cerr << "ERR_CONNECT\n";
       return 1;
     }
 
-    send_all(s, "GETFF " + key + " " + count + "\n");
+    send_all(sock, "GETFF " + key + " " + count + "\n");
 
-    std::string line;
-    while (recv_line(s, line)) {
-      if (line == "END") break;
-      std::cout << line << "\n";
+    string line;
+    while (recv_line(sock, line)) {
+      if (line == "END") {
+        break;
+      }
+      cout << line << "\n";
     }
-    net_close(s);
+    net_close(sock);
     return 0;
   }
 
   // GETFB <key> <n> - Backward range query to leader
   if (command == "GETFB" && argc >= (commandArgOffset + 1)) {
-    std::string key = argv[commandArgOffset];
-    std::string count = (argc >= (commandArgOffset + 2)) ? argv[commandArgOffset + 1] : "10";
+    string key = argv[commandArgOffset];
+    string count = (argc >= (commandArgOffset + 2)) ? argv[commandArgOffset + 1] : "10";
 
-    sock_t s = tcp_connect(leaderHost, leaderPort);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leaderHost, leaderPort);
+    if (sock == NET_INVALID) {
       std::cerr << "ERR_CONNECT\n";
       return 1;
     }
 
-    send_all(s, "GETFB " + key + " " + count + "\n");
+    send_all(sock, "GETFB " + key + " " + count + "\n");
 
-    std::string line;
-    while (recv_line(s, line)) {
-      if (line == "END") break;
-      std::cout << line << "\n";
+    string line;
+    while (recv_line(sock, line)) {
+      if (line == "END") {
+        break;
+      }
+      cout << line << "\n";
     }
 
     if (command == "COMPACT") {
@@ -530,78 +476,82 @@ int main(int argc, char** argv) {
 
       send_all(sock, "COMPACT\n");
 
-      std::string response;
+      string response;
       if (recv_line(sock, response)) {
-        std::cout << response << "\n";
+        cout << response << "\n";
       }
     }
 
-    net_close(s);
+    net_close(sock);
     return 0;
   }
 
   // GETKEYS [prefix] - List all keys or keys with prefix
   if (command == "GETKEYS") {
-    std::string prefix = (argc >= (commandArgOffset + 1)) ? argv[commandArgOffset] : "";
+    string prefix = (argc >= (commandArgOffset + 1)) ? argv[commandArgOffset] : "";
 
-    sock_t s = tcp_connect(leaderHost, leaderPort);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leaderHost, leaderPort);
+    if (sock == NET_INVALID) {
       std::cerr << "ERR_CONNECT\n";
       return 1;
     }
 
-    std::string cmd = prefix.empty() ? "GETKEYS" : ("GETKEYS " + prefix);
-    send_all(s, cmd + "\n");
+    string cmd = prefix.empty() ? "GETKEYS" : ("GETKEYS " + prefix);
+    send_all(sock, cmd + "\n");
 
-    std::string line;
+    string line;
     int count = 0;
-    while (recv_line(s, line)) {
-      if (line == "END") break;
+    while (recv_line(sock, line)) {
+      if (line == "END") {
+        break;
+      }
       if (line.rfind("KEY ", 0) == 0) {
-        std::cout << line.substr(4) << "\n";
+        cout << line.substr(4) << "\n";
         count++;
       } else if (line.rfind("ERR ", 0) == 0) {
         std::cerr << line << "\n";
-        net_close(s);
+        net_close(sock);
         return 1;
       }
     }
-    std::cout << "Total: " << count << " keys\n";
-    net_close(s);
+    cout << "Total: " << count << " keys\n";
+    net_close(sock);
     return 0;
   }
 
   // GETKEYSPAGING <pageSize> <pageNum> - Paginated key listing
   if (command == "GETKEYSPAGING" && argc >= (commandArgOffset + 2)) {
-    std::string pageSize = argv[commandArgOffset];
-    std::string pageNum = argv[commandArgOffset + 1];
+    string pageSize = argv[commandArgOffset];
+    string pageNum = argv[commandArgOffset + 1];
 
-    sock_t s = tcp_connect(leaderHost, leaderPort);
-    if (s == NET_INVALID) {
+    sock_t sock = tcp_connect(leaderHost, leaderPort);
+    if (sock == NET_INVALID) {
       std::cerr << "ERR_CONNECT\n";
       return 1;
     }
 
-    send_all(s, "GETKEYSPAGING " + pageSize + " " + pageNum + "\n");
+    send_all(sock, "GETKEYSPAGING " + pageSize + " " + pageNum + "\n");
 
-    std::string line;
+    string line;
     uint64_t total = 0;
     int count = 0;
-    while (recv_line(s, line)) {
-      if (line == "END") break;
+    while (recv_line(sock, line)) {
+      if (line == "END") {
+        break;
+      }
       if (line.rfind("TOTAL ", 0) == 0) {
         total = std::stoull(line.substr(6));
       } else if (line.rfind("KEY ", 0) == 0) {
-        std::cout << line.substr(4) << "\n";
+        cout << line.substr(4) << "\n";
         count++;
       } else if (line.rfind("ERR ", 0) == 0) {
         std::cerr << line << "\n";
-        net_close(s);
+        net_close(sock);
         return 1;
       }
     }
-    std::cout << "Page " << pageNum << ": " << count << " keys (total: " << total << ")\n";
-    net_close(s);
+    cout << "Page " << pageNum << ": " << count << " keys (total: " << total << ")\n";
+    net_close(sock);
     return 0;
   }
 

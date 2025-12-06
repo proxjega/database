@@ -208,7 +208,7 @@ bool Follower::ProcessCommandLine(const string &line, uint64_t &myLsn) {
 
         return true;
     } catch (const std::length_error& ex) {
-        FollowerLog(LogLevel::WARN, "Data exceeds limit (" + std::to_string(Database::MAX_VALUE_LENGTH) + " bytes). Reconnecting to flush stream.");
+        FollowerLog(LogLevel::WARN, "Data exceeds limit (" + std::to_string(MAX_VALUE_LENGTH) + " bytes). Reconnecting to flush stream.");
 
         // Žinome, kad blogas value, todėl apsimetame, kad įrašėmę.
         if (hasLsn && incomingLsn > myLsn) {
@@ -290,7 +290,7 @@ void Follower::ServeReadOnly() {
     // Linux TIME_WAIT can last up to 60 seconds. Even with SO_LINGER (RST instead of FIN),
     // the HTTP client may not have SO_LINGER, causing TIME_WAIT on our side.
     // We must wait longer than the TIME_WAIT duration to guarantee success.
-    for (int retry = 0; retry < 35 && this->running; ++retry) {
+    for (int retry = 0; retry < Consts::BIND_READONLY_RETRIES && this->running; ++retry) {
         listenSocket = tcp_listen(this->readPort);
         if (listenSocket != NET_INVALID) {
             break;  // Success!
@@ -298,7 +298,7 @@ void Follower::ServeReadOnly() {
 
         log_line(LogLevel::WARN,
                  "Follower read-only bind failed on port " + std::to_string(this->readPort) +
-                 ", retrying in 2s (attempt " + std::to_string(retry + 1) + "/35)");
+                 ", retrying in 2s (attempt " + std::to_string(retry + 1) + "/" + std::to_string(Consts::BIND_READONLY_RETRIES) + ")");
 
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }
@@ -306,7 +306,7 @@ void Follower::ServeReadOnly() {
     if (listenSocket == NET_INVALID) {
         log_line(LogLevel::ERROR,
                  "Follower cannot bind read-only port " + std::to_string(this->readPort) +
-                 " after 35 retries (70s), exiting ServeReadOnly");
+                 " after " + std::to_string(Consts::BIND_READONLY_RETRIES) + "retries (70s), exiting ServeReadOnly");
         return;  // Only return after exhausting retries
     }
 
@@ -321,14 +321,6 @@ void Follower::ServeReadOnly() {
 
         // Nedidelis timeout, kad klientas neužkabintų ryšio amžinai
         set_socket_timeouts(clientSocket, Consts::SOCKET_TIMEOUT_MS);
-
-        // Set SO_LINGER on client socket to avoid TIME_WAIT when closing
-#ifndef _WIN32
-        struct linger lin;
-        lin.l_onoff = 1;   // Enable linger
-        lin.l_linger = 0;  // Close immediately, send RST instead of FIN
-        setsockopt(clientSocket, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin));
-#endif
 
         thread(&Follower::HandleClient, this, clientSocket).detach();
     }
@@ -389,10 +381,10 @@ void Follower::HandleGetKeysPaging(sock_t sock, const vector<string> &tokens) {
 
         auto result = this->duombaze->GetKeysPaging(pageSize, pageNum);
 
-        // Send total count first
+        // Pirmiausiai siunčiame bendrą raktų kiekį.
         send_all(sock, "TOTAL " + std::to_string(result.totalItems) + "\n");
 
-        // Send each key
+        // Siunčiame kiekvieną raktą.
         for (const auto& key : result.keys) {
             send_all(sock, "KEY " + key + "\n");
         }
@@ -433,7 +425,7 @@ void Follower::HandleClient(sock_t clientSocket) {
                 HandleGetKeysPaging(clientSocket, tokens);
             }
             else {
-                // Reject all write operations (SET, PUT, DEL) and unsupported commands
+                // Reject all write operations (SET, DEL) and unsupported commands
                 // Followers are read-only and support: GET, GETFF, GETFB, GETKEYS, GETKEYSPAGING
                 send_all(clientSocket, "ERR_READ_ONLY\n");
             }

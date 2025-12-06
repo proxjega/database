@@ -144,10 +144,10 @@ std::optional<leafNodeCell> LeafPage::FindKey(const string &key){
  * @return uint16_t
  */
 uint16_t LeafPage::FindInsertPosition(const std::string& key) {
-    auto begin = Offsets();
-    auto end = Offsets() + Header()->numberOfCells;
+    auto *begin = Offsets();
+    auto *end = Offsets() + Header()->numberOfCells;
 
-    auto it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
+    auto *it = std::lower_bound(begin, end, key, [&](uint16_t offset, const std::string& k) {
         return GetKeyValue(offset).key < k;
     });
 
@@ -186,7 +186,9 @@ int16_t LeafPage::FindKeyIndex(const string& key) {
  */
 void LeafPage::RemoveKey(const string &key){
     int16_t index = FindKeyIndex(key);
-    if (index == -1) return;
+    if (index == -1) {
+        return;
+    }
     for (int i = index; i < Header()->numberOfCells - 1; i++) {
         Offsets()[i] = Offsets()[i + 1];
     }
