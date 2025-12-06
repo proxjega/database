@@ -56,7 +56,7 @@ static inline bool parse_host_port(const string& host_port, string& host_out, ui
 }
 
 // CONTROL_PLANE_TUNNEL_MAP: Direct Tailscale connections (no translation needed)
-// Used by cluster/status to query node status via direct Tailscale network
+// Užsilikę nuo senos versijos, kada reikėjo apeiti tailscale tinklą
 static const std::unordered_map<string, string> CONTROL_PLANE_TUNNEL_MAP = {
   {"100.117.80.126:8001", "100.117.80.126:8001"}, // Node 1 control plane (direct)
   {"100.70.98.49:8002",   "100.70.98.49:8002"},   // Node 2 control plane (direct)

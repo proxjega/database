@@ -318,8 +318,8 @@ if [ $FAILED -gt 0 ]; then
 else
     echo -e "${GREEN}ALL TESTS PASSED!${NC}"
     echo ""
-    echo "✅ Write operations correctly route to leader only"
-    echo "✅ Read operations successfully route to all nodes (leader + followers)"
-    echo "✅ Operations work correctly after leader failover"
+    echo "Write operations correctly route to leader only"
+    echo "Read operations successfully route to all nodes (leader + followers)"
+    echo "Operations work correctly after leader failover"
     echo ""
 fi
