@@ -10,7 +10,6 @@ Puslapiais pagrįsta B+ medžio implementacija su Write-Ahead Logging (WAL) pala
 - **Page Splitting**: Automatinis puslapių dalijimas
 - **Lazy Deletion**: Žymėjimas kaip ištrinta (ištrina tik Optimize)
 - **Optimize**: Medžio perkūrimas, ištrintų įrašų šalinimas
--  **Interactive CLI**: Komandinės eilutės sąsaja 
 
 ## Kompiliavimas
 
@@ -34,136 +33,83 @@ make all
 make clean
 ```
 
-## Naudojimas
+## Naudojimas(kode)
+1) Sukurti klasės "Database" objektą
+2) atlikti operacijas
 
-### Interaktyvus Režimas
+### Operacijos:
 
-```bash
-./build/main
-
-# CLI komandos:
-> SET user01 Jonas
-OK
-
-> GET user01
-Jonas
-
-> SET user02 Petras
-OK
-
-> GETFF user 10
-user01: Jonas
-user02: Petras
-
-> DEL user01
-OK
-
-> OPTIMIZE
-Optimized
-
-> EXIT
+```cpp
+    std::optional<leafNodeCell> Get(const string &key) const;
+    bool Set(const string& key, const string &value);
+    vector<string> GetKeys() const;
+    pagingResultKeysOnly GetKeysPaging(uint32_t pageSize, uint32_t pageNum) const;
+    vector<leafNodeCell> GetKeysValues() const;
+    pagingResult GetKeysValuesPaging(uint32_t pageSize, uint32_t pageNum) const;
+    vector<string> GetKeys(const string &prefix) const;
+    vector<leafNodeCell> GetFF(const string &key, uint32_t n) const;
+    vector<leafNodeCell> GetFB(const string &key, uint32_t n) const;
+    bool Remove(const string& key);
+    void Optimize();
 ```
 
-### Palaikomos Komandos
-
-| Komanda | Sintaksė | Aprašymas |
-|---------|----------|-----------|
-| `SET` | `SET <key> <value>` | Nustatyti raktą |
-| `GET` | `GET <key>` | Gauti rakto reikšmę |
-| `DEL` | `DEL <key>` | Ištrinti raktą (lazy) |
-| `GETFF` | `GETFF <key> [count]` | Priekinė užklausa (n raktų nuo key) |
-| `GETFB` | `GETFB <key> [count]` | Atbulinė užklausa (n raktų iki key) |
-| `OPTIMIZE` | `OPTIMIZE` | Pertvarkyti DB, pašalinti ištrintus |
-| `EXIT` | `EXIT` arba `QUIT` | Išeiti |
-
-### Pavyzdžiai
-
-```bash
-# Sukurti keletą įrašų
-> SET city01 Vilnius
-> SET city02 Kaunas
-> SET city03 Klaipėda
-> SET city04 Šiauliai
-> SET city05 Panevėžys
-
-# Gauti vieną įrašą
-> GET city03
-Klaipėda
-
-# Forward range (3 raktai nuo city02)
-> GETFF city02 3
-city02: Kaunas
-city03: Klaipėda
-city04: Šiauliai
-
-# Backward range (2 raktai iki city04)
-> GETFB city04 2
-city03: Klaipėda
-city04: Šiauliai
-
-# Ištrinti
-> DEL city03
-OK
-
-# Perkurti (pašalinti city03 fiziškai)
-> OPTIMIZE
-Optimized
-
-# Patikrinti
-> GET city03
-Key not found
-```
-
-### Puslapių Struktūra
+## Puslapių Struktūra
 
 **MetaPage (puslapio 0):**
+- Header
 ```cpp
-struct MetaPage {
-    uint32_t root_page_id;   // Root puslapio ID
-    uint32_t last_page_id;   // Paskutinio puslapio ID
-    uint32_t total_keys;     // Bendras raktų skaičius
+struct MetaPageHeader {
+    uint32_t rootPageID;
+    uint32_t lastPageID;
+    uint64_t keyNumber;
+    uint64_t lastSequenceNumber;
 }
 ```
 
 **LeafPage:**
+- PageHeader* Header();
 ```cpp
-struct LeafPage {
-    // Header
-    uint16_t cell_count;     // Ląstelių skaičius
-    uint16_t free_space;     // Laisvos vietos offset
-
-    // Cells (key-value pairs)
-    Cell[] cells;
-
-    // Special pointers
-    uint32_t next_leaf_id;   // Kito lapo ID (range queries)
-    uint32_t prev_leaf_id;   // Ankstesnio lapo ID
+struct PageHeader {
+    bool isLeaf;
+    uint32_t pageID;
+    uint32_t parentPageID;
+    uint16_t numberOfCells;
+    uint16_t offsetToStartOfFreeSpace;
+    uint16_t offsetToEndOfFreeSpace;
+    uint16_t offsetToStartOfSpecialSpace;
 }
 ```
+
+- uint16_t* Offsets();
+- uint32_t* Special1();
+- uint32_t* Special2();
 
 **InternalPage:**
+- PageHeader* Header();
 ```cpp
-struct InternalPage {
-    // Header
-    uint16_t cell_count;
-    uint16_t free_space;
-
-    // Cells (key + child page ID)
-    Cell[] cells;
-
-    // Special pointer
-    uint32_t leftmost_child; // Kairiausiasis vaikas
+struct PageHeader {
+    bool isLeaf;
+    uint32_t pageID;
+    uint32_t parentPageID;
+    uint16_t numberOfCells;
+    uint16_t offsetToStartOfFreeSpace;
+    uint16_t offsetToEndOfFreeSpace;
+    uint16_t offsetToStartOfSpecialSpace;
 }
 ```
 
-### WAL Formatas
+- uint16_t* Offsets();
+- uint32_t* Special1();
+- uint32_t* Special2();
+
+## WAL Formatas
 
 Kiekvienas WAL įrašas:
 ```
 <seq>\t<op>\t<key>\t<value>
 ```
 
-### Page Splitting
+## Page Splitting
 
 Kai puslapis pilnas:
 1. Sukuriamas naujas puslapis
@@ -172,7 +118,7 @@ Kai puslapis pilnas:
 4. Parent'as skaidomas jei pilnas (rekursyviai)
 5. Naujas root sukuriamas jei reikia
 
-### Recovery Procesas
+## Recovery Procesas
 
 Atidarant DB:
 1. Nuskaitomas `database.wal` failas
@@ -185,7 +131,7 @@ Atidarant DB:
 ```cpp
 static constexpr size_t MAX_KEY_LENGTH = 255;      // 255 baitai
 static constexpr size_t MAX_VALUE_LENGTH = 2048;   // 2KB
-static constexpr size_t PAGE_SIZE = 4096;          // 4KB puslapiai
+static constexpr size_t PAGE_SIZE = 16384;          // 16KB puslapiai
 ```
 
 ## Konfigūracija
@@ -206,7 +152,7 @@ Perkompiliuoti:
 make clean && make all
 ```
 
-### Optimizacija
+## Optimizacija
 
 **Dideliems duomenų kiekiams:**
 1. Didinti `PAGE_SIZE`
@@ -222,9 +168,8 @@ make clean && make all
 
 Ši DB naudojama:
 
-1. **Standalone CLI** - Šiame kataloge
-2. **Replication System** - `../Replication/` (leader/follower)
-3. **HTTP API** - `../server/` (per DbClient wrapper)
+1. **Replication System** - `../Replication/` (leader/follower)
+2. **HTTP API** - `../server/` (per DbClient wrapper)
 
 ## Žr. Taip Pat
 
