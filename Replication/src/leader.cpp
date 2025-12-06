@@ -150,15 +150,14 @@ void Leader::HandleFollower(sock_t followerSocket) {
       return;
     }
 
-    // Čia kažkodėl siuntinėja pastoviai su kiekvienu request'u "GET __verify__". Tai ignore
+    // Čia kažkodėl follower'iai pastoviai siuntinėja su kiekvienu request'u "GET __verify__". Tai ignore
     if (helloLine.rfind("GET", 0) == 0) {
        net_close(followerSocket);
        return;
     }
 
     auto helloParts = split(helloLine, ' ');
-    // New format: HELLO <nodeId> <lastAppliedLsn>
-    // Old format: HELLO <lastAppliedLsn> (for backward compatibility)
+    // Naujas formatas: HELLO <nodeId> <lastAppliedLsn>
     if (helloParts.size() < 2 || helloParts.size() > 3 || helloParts[0] != "HELLO") {
       log_line(LogLevel::WARN, "Follower sent bad HELLO: " + helloLine);
       net_close(followerSocket);
@@ -169,16 +168,9 @@ void Leader::HandleFollower(sock_t followerSocket) {
     uint64_t lastAppliedLsn = 0;
 
     try {
-      if (helloParts.size() == 3) {
-        // New format: HELLO <nodeId> <lastAppliedLsn>
-        nodeId = std::stoi(helloParts[1]);
-        lastAppliedLsn = std::stoull(helloParts[2]);
-        log_line(LogLevel::INFO, "Follower HELLO: nodeId=" + std::to_string(nodeId) + " LSN=" + std::to_string(lastAppliedLsn));
-      } else {
-        // Old format: HELLO <lastAppliedLsn>
-        lastAppliedLsn = std::stoull(helloParts[1]);
-        log_line(LogLevel::INFO, "Follower HELLO (no nodeId): LSN=" + std::to_string(lastAppliedLsn));
-      }
+      nodeId = std::stoi(helloParts[1]);
+      lastAppliedLsn = std::stoull(helloParts[2]);
+      log_line(LogLevel::INFO, "Follower HELLO: nodeId=" + std::to_string(nodeId) + " LSN=" + std::to_string(lastAppliedLsn));
     } catch (...) {
       log_line(LogLevel::WARN, "Bad format in follower HELLO: " + helloLine);
       net_close(followerSocket);
@@ -200,7 +192,7 @@ void Leader::HandleFollower(sock_t followerSocket) {
         follower = *iterator;
 
         if (follower->isAlive) {
-          // Duplicate connection! Close old socket and replace
+          // Duplicate connection! uždarome seną jungtį ir ją pakeičiama.
           log_line(LogLevel::WARN, "Node " + std::to_string(nodeId) +
                    " replacing active connection");
           if (follower->followerSocket != NET_INVALID) {
@@ -269,7 +261,7 @@ void Leader::HandleFollower(sock_t followerSocket) {
         try {
           uint64_t ackLsn = std::stoull(tokens[1]);
           follower->ackedUptoLsn = std::max(follower->ackedUptoLsn, ackLsn);
-          follower->lastSeenMs = now_ms();  // Update last seen on each ACK
+          follower->lastSeenMs = now_ms();  // Update'inam kada paskutinį kartą matemę follower'į.
           this->conditionVariable.notify_all();
         } catch (...) {
           log_line(LogLevel::WARN, "Bad ACK lsn from follower: " + tokens[1]);
