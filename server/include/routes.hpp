@@ -56,7 +56,7 @@ static inline bool parse_host_port(const string& host_port, string& host_out, ui
 }
 
 // CONTROL_PLANE_TUNNEL_MAP: Direct Tailscale connections (no translation needed)
-// Used by cluster/status to query node status via direct Tailscale network
+// Užsilikę nuo senos versijos, kada reikėjo apeiti tailscale tinklą
 static const std::unordered_map<string, string> CONTROL_PLANE_TUNNEL_MAP = {
   {"100.117.80.126:8001", "100.117.80.126:8001"}, // Node 1 control plane (direct)
   {"100.70.98.49:8002",   "100.70.98.49:8002"},   // Node 2 control plane (direct)
@@ -310,7 +310,6 @@ inline auto make_routes() {
   };
 
   // POST /api/keys/{{key}}?nodeId=N with JSON body {"value": "..."}
-  // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/set/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = string());
@@ -370,7 +369,6 @@ inline auto make_routes() {
   };
 
   // DELETE /api/keys/{{key}}?nodeId=N
-  // Optional nodeId parameter - if specified, must be the leader (write operations leader-only)
   api.post("/api/del/{{key}}") = [db_client](http_request& req, http_response& res) {
     try {
       auto params = req.url_parameters(s::key = string());

@@ -1,8 +1,9 @@
 # HTTP Serveris su Vue.js GUI
 
 HTTP serveris su Vue.js SPA, palaikantis du deployment režimus:
-- **Režimas 1: Localhost Mazgai** - Lokalus klasteris (4 procesai vienoje mašinoje)
-- **Režimas 2: Remote VPS** - Remote klasteris (4 VPS) per SSH tunnels
+
+-   **Režimas 1: Localhost Mazgai** - Lokalus klasteris (4 procesai vienoje mašinoje)
+-   **Režimas 2: Remote VPS** - Remote klasteris (4 VPS) per SSH tunnels
 
 ---
 
@@ -39,8 +40,16 @@ npm -v # Should print "11.6.x"
 Serveris jungiasi tiesiogiai prie localhost portų.
 
 ```cpp
+// Line ~60: CONTROL_PLANE_TUNNEL_MAP - localhost control plane
+static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
+  {"127.0.0.1:8001", "127.0.0.1:8001"},  // Node 1 control
+  {"127.0.0.1:8002", "127.0.0.1:8002"},  // Node 2 control
+  {"127.0.0.1:8003", "127.0.0.1:8003"},  // Node 3 control
+  {"127.0.0.1:8004", "127.0.0.1:8004"}   // Node 4 control
+};
+
 // routes.hpp - Localhost configuration
-// Line ~50: CLUSTER_NODES should point to localhost
+// Line ~69: CLUSTER_NODES should point to localhost
 const std::vector<std::string> CLUSTER_NODES = {
   "127.0.0.1:7101",  // Node 1 client API
   "127.0.0.1:7102",  // Node 2 client API
@@ -48,13 +57,8 @@ const std::vector<std::string> CLUSTER_NODES = {
   "127.0.0.1:7104"   // Node 4 client API
 };
 
-// Line ~41: CONTROL_PLANE_TUNNEL_MAP - localhost control plane
-static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
-  {"127.0.0.1:8001", "127.0.0.1:8001"},  // Node 1 control
-  {"127.0.0.1:8002", "127.0.0.1:8002"},  // Node 2 control
-  {"127.0.0.1:8003", "127.0.0.1:8003"},  // Node 3 control
-  {"127.0.0.1:8004", "127.0.0.1:8004"}   // Node 4 control
-};
+// Line ~257
+string leader_host = "127.0.0.1";
 
 // Line ~59: TAILSCALE_TO_LOCAL_MAP - NOT NEEDED for localhost
 // (Comment out or leave empty)
@@ -124,10 +128,12 @@ npm run build
 ### Režimas 1: Localhost Mazgai
 
 **Prieš pradedant:**
+
 1. Įsitikinti kad `Replication/include/rules.hpp` naudoja `127.0.0.1`
 2. Įsitikinti kad `server/include/routes.hpp` sukonfigūruotas localhost režimui
 
 **Terminalai 1-4: Paleisti Replikacijos Klasterį**
+
 ```bash
 cd Replication
 ./run 1  # Mazgas 1
@@ -137,11 +143,13 @@ cd Replication
 ```
 
 Palaukti ~3 sek lyderio rinkimų:
+
 ```
 [node X] [INFO] became LEADER term 1 with votes=3
 ```
 
 **Terminalas 5: Paleisti HTTP Serverį**
+
 ```bash
 cd server
 ./server_app
@@ -156,6 +164,7 @@ cd server
 ### Režimas 2: Remote Klasteris per SSH Tunnels
 
 **Prieš pradedant:**
+
 1. Įsitikinti kad `Replication/include/rules.hpp` naudoja Tailscale IPs (100.x.x.x)
 2. Įsitikinti kad `server/include/routes.hpp` sukonfigūruotas remote režimui
 
@@ -177,10 +186,11 @@ cd Replication
 ```
 
 **Deploy script automatiškai:**
-- Kompiliuoja lokaliai
-- Upload binaries per SSH
-- Sustabdo senus procesus
-- Paleidžia naujus procesus
+
+-   Kompiliuoja lokaliai
+-   Upload binaries per SSH
+-   Sustabdo senus procesus
+-   Paleidžia naujus procesus
 
 Palaukti ~3 sek kol klasteris išrenks leader.
 
@@ -201,6 +211,7 @@ chmod +x start_tunnels.sh stop_tunnels.sh
 ```
 
 Output:
+
 ```
 Starting SSH tunnels to remote cluster nodes...
 Creating tunnels for client API (7001) and control plane (8001-8004)...
@@ -237,21 +248,22 @@ Tunnels bypass Tailscale network and connect to remote nodes via physical IPs.
 **File**: [start_tunnels.sh](start_tunnels.sh)
 
 Each node has 2 tunnels:
+
 1. **Client API tunnel** (7101-7104 → remote 7001)
 2. **Control Plane tunnel** (8001-8004 → remote 8001-8004)
 
 **Cluster Mapping:**
 
-| Local Port | Remote Node | Physical IP | Remote Port | Purpose |
-|------------|-------------|-------------|-------------|---------|
-| 7101 | Node 1 | 207.180.251.206 | 7001 | Client API |
-| 7102 | Node 2 | 167.86.66.60 | 7001 | Client API |
-| 7103 | Node 3 | 167.86.83.198 | 7001 | Client API |
-| 7104 | Node 4 | 167.86.81.251 | 7001 | Client API |
-| 8001 | Node 1 | 207.180.251.206 | 8001 | Control Plane |
-| 8002 | Node 2 | 167.86.66.60 | 8002 | Control Plane |
-| 8003 | Node 3 | 167.86.83.198 | 8003 | Control Plane |
-| 8004 | Node 4 | 167.86.81.251 | 8004 | Control Plane |
+| Local Port | Remote Node | Physical IP     | Remote Port | Purpose       |
+| ---------- | ----------- | --------------- | ----------- | ------------- |
+| 7101       | Node 1      | 207.180.251.206 | 7001        | Client API    |
+| 7102       | Node 2      | 167.86.66.60    | 7001        | Client API    |
+| 7103       | Node 3      | 167.86.83.198   | 7001        | Client API    |
+| 7104       | Node 4      | 167.86.81.251   | 7001        | Client API    |
+| 8001       | Node 1      | 207.180.251.206 | 8001        | Control Plane |
+| 8002       | Node 2      | 167.86.66.60    | 8002        | Control Plane |
+| 8003       | Node 3      | 167.86.83.198   | 8003        | Control Plane |
+| 8004       | Node 4      | 167.86.81.251   | 8004        | Control Plane |
 
 **IP Translation** ([routes.hpp](include/routes.hpp)):
 
@@ -279,21 +291,22 @@ static const std::unordered_map<std::string, std::string> TAILSCALE_TO_LOCAL_MAP
 ### HTTP Serveris (C++)
 
 **Pagrindiniai Failai:**
-- [main.cpp](main.cpp) - Serverio įėjimo taškas (port 8080)
-- [include/routes.hpp](include/routes.hpp) - API endpoint'ai + statinių failų pateikimas
-- [include/db_client.hpp](include/db_client.hpp) - DB kliento sąsaja
-- [src/db_client.cpp](src/db_client.cpp) - Kliento implementacija
 
+-   [main.cpp](main.cpp) - Serverio įėjimo taškas (port 8080)
+-   [include/routes.hpp](include/routes.hpp) - API endpoint'ai + statinių failų pateikimas
+-   [include/db_client.hpp](include/db_client.hpp) - DB kliento sąsaja
+-   [src/db_client.cpp](src/db_client.cpp) - Kliento implementacija
 
 ### Web Aplikacija (Vue.js)
 
 **Vieta:** [webapp/](webapp/)
 
 **Puslapiai:**
-- **Home** - Pagrindinis puslapis
-- **CRUD** - Kurti, skaityti, atnaujinti, trinti operacijos
-- **Browse** - Puslapiuojamas DB naršymas (forward/backward)
-- **Cluster** - Klasterio būsena ir lyderio informacija
+
+-   **Home** - Pagrindinis puslapis
+-   **CRUD** - Kurti, skaityti, atnaujinti, trinti operacijos
+-   **Browse** - Puslapiuojamas DB naršymas (forward/backward)
+-   **Cluster** - Klasterio būsena ir lyderio informacija
 
 Žr. [webapp/README.md](webapp/README.md) detalesnei dokumentacijai.
 
@@ -301,21 +314,21 @@ static const std::unordered_map<std::string, std::string> TAILSCALE_TO_LOCAL_MAP
 
 ### Duomenų Bazės Operacijos
 
-| Endpoint | Metodas | Aprašymas | Response |
-|----------|---------|-----------|--------------|
-| `GET /api/get/:key` | GET | Gauti rakto reikšmę | - |
-| `POST /api/set/:key` | SET | Nustatyti raktą | `{"value": "..."}` |
-| `POST /api/del/:key` | DEL | Ištrinti raktą | - |
-| `GET /api/getff/:key?count=N` | GETFF | Priekinė užklausa | - |
-| `GET /api/getfb/:key?count=N` | GETFB | Atbulinė užklausa | - |
-| `POST /api/optimize` | - | Pertvarkyti DB | - |
+| Endpoint                      | Metodas | Aprašymas           | Response           |
+| ----------------------------- | ------- | ------------------- | ------------------ |
+| `GET /api/get/:key`           | GET     | Gauti rakto reikšmę | -                  |
+| `POST /api/set/:key`          | SET     | Nustatyti raktą     | `{"value": "..."}` |
+| `POST /api/del/:key`          | DEL     | Ištrinti raktą      | -                  |
+| `GET /api/getff/:key?count=N` | GETFF   | Priekinė užklausa   | -                  |
+| `GET /api/getfb/:key?count=N` | GETFB   | Atbulinė užklausa   | -                  |
+| `POST /api/optimize`          | -       | Pertvarkyti DB      | -                  |
 
 ### Klasterio Valdymas
 
-| Endpoint | Metodas | Aprašymas |
-|----------|---------|-----------|
-| `GET /api/leader` | GET | Rasti dabartinį lyderį (host, port, status) |
-| `GET /health` | GET | Serverio būsenos patikrinimas |
+| Endpoint          | Metodas | Aprašymas                                   |
+| ----------------- | ------- | ------------------------------------------- |
+| `GET /api/leader` | GET     | Rasti dabartinį lyderį (host, port, status) |
+| `GET /health`     | GET     | Serverio būsenos patikrinimas               |
 
 ### Pavyzdžiai
 
@@ -379,5 +392,5 @@ curl http://localhost:8080/api/get/test
 
 ## Žr. Taip Pat
 
-- [Pagrindinio Projekto README](../README.md)
-- [Replikacijos Sistemos Dokumentacija](../Replication/readme.md)
+-   [Pagrindinio Projekto README](../README.md)
+-   [Replikacijos Sistemos Dokumentacija](../Replication/readme.md)
