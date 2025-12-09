@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <mutex>
 
 namespace CONSTS {
   static constexpr int TRIES_FOR_COMPACT = 50;
@@ -191,6 +192,11 @@ void Leader::HandleFollower(sock_t followerSocket) {
         // Radome egzistuojančia vietą, ją ir naudojame.
         follower = *iterator;
 
+        if (follower->followerSocket != NET_INVALID) {
+          net_close(follower->followerSocket);
+          follower->followerSocket = NET_INVALID;
+        }
+
         if (follower->isAlive) {
           // Duplicate connection! uždarome seną jungtį ir ją pakeičiama.
           log_line(LogLevel::WARN, "Node " + std::to_string(nodeId) +
@@ -221,7 +227,18 @@ void Leader::HandleFollower(sock_t followerSocket) {
 
     if (!send_all(followerSocket, "OK\n")) {
        log_line(LogLevel::WARN, "Failed to send handshake ACK");
-       net_close(followerSocket);
+       {
+        std::lock_guard<mutex> lock(this->mtx);
+        if (follower) {
+          follower->isAlive = false;
+          if (follower->followerSocket != NET_INVALID) {
+            net_close(follower->followerSocket);
+            follower->followerSocket = NET_INVALID;
+          }
+        } else {
+          net_close(followerSocket);
+        }
+       }
        return;
     }
 
@@ -238,6 +255,11 @@ void Leader::HandleFollower(sock_t followerSocket) {
         if (!send_all(follower->followerSocket, message)) {
           // Jei siuntimas nepavyksta – nutraukiam šitą follower'į
           follower->isAlive = false;
+
+          if (follower->followerSocket != NET_INVALID) {
+            net_close(follower->followerSocket);
+            follower->followerSocket = NET_INVALID;
+          }
           return;
         }
     }
@@ -253,6 +275,11 @@ void Leader::HandleFollower(sock_t followerSocket) {
       if (!recv_line(follower->followerSocket, line)) {
         // nutrūkęs ryšys / klaida
         follower->isAlive = false;
+
+        if (follower->followerSocket != NET_INVALID) {
+          net_close(follower->followerSocket);
+          follower->followerSocket = NET_INVALID;
+        }
         break;
       }
 
@@ -272,11 +299,25 @@ void Leader::HandleFollower(sock_t followerSocket) {
     log_line(LogLevel::ERROR, string("Exception in follower_thread: ") + ex.what());
     if (follower) {
       follower->isAlive = false;
+
+      if (follower->followerSocket != NET_INVALID) {
+        net_close(follower->followerSocket);
+        follower->followerSocket = NET_INVALID;
+      } else {
+        net_close(followerSocket);
+      }
     }
   } catch (...) {
     log_line(LogLevel::ERROR, "Unknown exception in follower_thread");
     if (follower) {
       follower->isAlive = false;
+
+      if (follower->followerSocket != NET_INVALID) {
+        net_close(follower->followerSocket);
+        follower->followerSocket = NET_INVALID;
+      } else {
+        net_close(followerSocket);
+      }
     }
   }
 }
@@ -296,6 +337,10 @@ void Leader::BroadcastWalRecord(const WalRecord &walRecord) {
 
       if (!send_all(follower->followerSocket, message)) {
         follower->isAlive = false;
+        if (follower->followerSocket != NET_INVALID) {
+          net_close(follower->followerSocket);
+          follower->followerSocket = NET_INVALID;
+        }
         log_line(LogLevel::WARN, "Broadcast failed to follower");
     }
     }
@@ -559,6 +604,10 @@ void Leader::BroadcastReset() {
       if (!send_all(follower->followerSocket, "RESET_WAL\n")) {
         log_line(LogLevel::WARN, "Failed to send RESET_WAL to a follower");
         follower->isAlive = false;
+        if (follower->followerSocket != NET_INVALID) {
+          net_close(follower->followerSocket);
+          follower->followerSocket = NET_INVALID;
+        }
       }
     }
   }
