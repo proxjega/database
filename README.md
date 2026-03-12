@@ -1,6 +1,10 @@
 # Paskirstyta Raktų-Reikšmių Duomenų Bazė
 
-Pilnas paskirstytos duomenų bazės sistemos įgyvendinimas su B+ Tree, WAL (Write-Ahead Logging), Raft-stiliaus replikacija ir Vue.js web sąsaja.
+Šis projektas yra paskirstytos raktų–reikšmių duomenų bazės realizacija, sukurta naudojant C++. Sistema susideda iš kelių pagrindinių komponentų: puslapiais pagrįstos B+ Tree duomenų bazės, Write-Ahead Logging (WAL) mechanizmo patikimam duomenų saugojimui, bei Raft stiliaus replikacijos, kuri leidžia keliems mazgams palaikyti vienodą duomenų būseną.
+
+Klasteryje veikia 4 mazgai – vienas lyderis ir keli sekėjai. Lyderis priima rašymo operacijas ir replikuoja WAL į sekėjus, o skaitymo operacijos gali būti vykdomos bet kuriame mazge. Sugedus lyderiui, sistema automatiškai išrenka naują lyderį.
+
+Prie duomenų bazės galima jungtis per CLI klientą, HTTP API arba web sąsają, sukurtą naudojant Vue.js. Web aplikacija leidžia vykdyti CRUD operacijas, atlikti range užklausas ir stebėti klasterio būseną realiu laiku.
 
 ## Architektūra
 
