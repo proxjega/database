@@ -1,21 +1,21 @@
-# Paskirstyta Raktų-Reikšmių Duomenų Bazė
+# Distributed Key-Value Database
 
-Šis projektas yra paskirstytos raktų–reikšmių duomenų bazės realizacija, sukurta naudojant C++. Sistema susideda iš kelių pagrindinių komponentų: puslapiais pagrįstos B+ Tree duomenų bazės, Write-Ahead Logging (WAL) mechanizmo patikimam duomenų saugojimui, bei Raft stiliaus replikacijos, kuri leidžia keliems mazgams palaikyti vienodą duomenų būseną.
+This project is an implementation of a distributed key-value database built using C++. The system consists of several main components: a page-based B+ Tree database, a Write-Ahead Logging (WAL) mechanism for reliable data storage, and Raft-style replication, which allows multiple nodes to maintain a consistent data state.
 
-Klasteryje veikia 4 mazgai – vienas lyderis ir keli sekėjai. Lyderis priima rašymo operacijas ir replikuoja WAL į sekėjus, o skaitymo operacijos gali būti vykdomos bet kuriame mazge. Sugedus lyderiui, sistema automatiškai išrenka naują lyderį.
+The cluster runs 4 nodes – one leader and several followers. The leader handles write operations and replicates WAL entries to followers, while read operations can be performed on any node. If the leader fails, the system automatically elects a new leader.
 
-Prie duomenų bazės galima jungtis per CLI klientą, HTTP API arba web sąsają, sukurtą naudojant Vue.js. Web aplikacija leidžia vykdyti CRUD operacijas, atlikti range užklausas ir stebėti klasterio būseną realiu laiku.
+Clients can connect to the database via a CLI client, HTTP API, or a web interface built with Vue.js. The web application allows CRUD operations, range queries, and real-time cluster monitoring.
 
-## Architektūra
+## Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│                    Naršyklė (Vue.js SPA)                       │
+│                    Browser (Vue.js SPA)                        │
 │                     HTTP: localhost:8080                       │
 └────────────────────────────┬───────────────────────────────────┘
                              │
 ┌────────────────────────────▼───────────────────────────────────┐
-│              Lithium HTTP Serveris (C++)                       │
+│              Lithium HTTP Server (C++)                         │
 │                      Port: 8080                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
 │  │ Static Files │  │  API Routes  │  │Leader Discov.│          │
@@ -28,65 +28,65 @@ Prie duomenų bazės galima jungtis per CLI klientą, HTTP API arba web sąsają
 └───────────────────────────┼────────────────────────────────────┘
                             │
 ┌───────────────────────────▼────────────────────────────────────┐
-│              Replikacijos Klasteris (4 mazgai)                 │
+│              Replication cluster (4 nodes)                     │
 │  ┌──────────────────┐  ┌──────────────────┐                    │
-│  │  Lyderis         │  │  Sekėjai (2,3,4) │                    │
+│  │  Leader          │  │  Followers(2,3,4)│                    │
 │  │  Port: 7001      │  │  Ports: 7101-7104│                    │
 │  │  Repl: 7002      │  │                  │                    │
 │  └────────┬─────────┘  └──────────────────┘                    │
 │           │                                                    │
 │  ┌────────▼─────────────────────────────────────┐              │
 │  │  B+ Tree Database + WAL                      │              │
-│  │  - Puslapių saugykla (16KB puslapiai)        │              │
+│  │  - Page storage (16KB puslapiai)             │              │
 │  │  - Write-Ahead Logging                       │              │
-│  │  - CRUD operacijos                           │              │
+│  │  - CRUD operations                           │              │
 │  │  - Range queries (GETFF/GETFB)               │              │
 │  └──────────────────────────────────────────────┘              │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-## Komponentai
+## Components
 
-### 1. B+ Tree Duomenų Bazė ([btree/](btree/))
+### 1. B+ Tree Database ([btree/](btree/))
 
-Puslapiais pagrįsta B+ medžio duomenų bazė su WAL palaikymu:
-- **Puslapių tipai**: MetaPage, LeafPage, InternalPage
-- **Operacijos**: Get, Set, Remove, Optimize
-- **WAL**: Automatinis recovery po crash
-- **Puslapių dydis**: 16KB (konfigūruojamas)
+Page-based B+ Tree database with WAL support:
+- **Page types**: MetaPage, LeafPage, InternalPage
+- **Operations**: Get, Set, Remove, Optimize
+- **WAL**: Automatic recovery after crash
+- **Page size**: 16KB (configurable)
 
-**Žr. [btree/README.md](btree/README.md)**
+**See [btree/README.md](btree/README.md)**
 
-### 2. Replikacijos Sistema ([Replication/](Replication/))
+### 2. Replication System ([Replication/](Replication/))
 
-Raft-stiliaus lyderio-sekėjų replikacija:
-- **4 Mazgai**: 1 lyderis, 3 sekėjai
-- **Automatinės Rinkimai**: Heartbeat + voting sistema
-- **WAL Replikacija**: Leader → Followers streaming
-- **Failover**: Automatinis naujojo lyderio išrinkimas
+Raft-style leader-follower replication:
+- **4 Nodes**: 1 leader, 3 followers
+- **Automatic Elections**: Heartbeat + voting system
+- **WAL Replication**: Leader → Followers streaming
+- **Failover**: Automatic new leader election
 
-**Žr. [Replication/readme.md](Replication/readme.md)**
+**See [Replication/readme.md](Replication/readme.md)**
 
-### 3. HTTP Serveris + Web GUI ([server/](server/))
+### 3. HTTP Server + Web GUI ([server/](server/))
 
-Lithium C++ HTTP serveris su Vue.js 3 aplikacija:
+Lithium C++ HTTP server with Vue.js 3 application:
 - **API Endpoints**: GET, SET, DELETE, GETFF, GETFB, OPTIMIZE, ...
-- **Leader Discovery**: Dinaminis lyderio aptikimas
+- **Leader Discovery**: Dynamic leader detection
 - **Static Files**: Vue.js SPA hosting
 - **Web GUI**: Bootstrap 5 responsive UI
 
-**Žr. [server/README.md](server/README.md)**
+**See [server/README.md](server/README.md)**
 
-## Greitas Startas
+## Quick Start
 
-### Reikalavimai (Ubuntu/Linux)
+### Requirements (Ubuntu/Linux)
 
 ```bash
-# C++ kompiliatorius ir bibliotekos
+# C++ compiler and libraries
 sudo apt update
 sudo apt install -y build-essential cmake g++ libssl-dev libboost-all-dev
 
-# Node.js 24 (web aplikacijai)
+# Node.js 24 (for web application)
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
 \. "$HOME/.nvm/nvm.sh"
 nvm install 24
@@ -94,29 +94,29 @@ node -v # Should print "v24.x.x"
 npm -v # Should print "11.6.x"
 ```
 
-### Sistemos Konfigūracija
+### System Configuration
 
-- Client API: 100.x.x.x:7001 (per Tailscale)
-- Control plane: 100.x.x.x:8001-8004 (per Tailscale)
+- Client API: 100.x.x.x:7001 (via Tailscale)
+- Control plane: 100.x.x.x:8001-8004 (via Tailscale)
 
-#### Tailscale Setup ir Node config (one-time)
-**Reikalingas visiems remote mazgams ir local machine:**
+#### Tailscale Setup and Node Config (one-time)
+**Required for all remote nodes and local machine:**
 
 ```bash
-# Įdiekite Tailscale (Ubuntu/Debian)
+# Install Tailscale (Ubuntu/Debian)
 curl -fsSL https://tailscale.com/install.sh | sh
 
-# Prisijunkite prie Tailscale tinklo
-# Parašyti Kasparui Šumskiui (kasparas.sumskis@mif.stud.vu.lt kad pridėtų prie tinklo)
+# Connect to Tailscale network
+# Contact Kaspar Šumski (kasparas.sumskis@mif.stud.vu.lt to add to network)
 sudo tailscale up
 
-# Patikrinkite, ar visi mazgai matomi
+# Check all nodes are visible
 tailscale status
 ```
 
-Turėtumėte matyti visus 4 VPS nodes ir savo local machine.
+You should see 4 VPS nodes and your local machine.
 
-**Setup SSH keys authentication (jei reikia tiesiogines prieigos):** 
+**Setup SSH keys authentication (if direct access is needed):** 
 
 ```bash
 # Generate SSH key (if you don't have one)
@@ -132,9 +132,9 @@ ssh-copy-id Anthony@167.86.81.251    # Node 4
 ssh Anthony@207.180.251.206 'echo OK'
 ```
 
-#### Konfigūruoti Klasterio Mazgus (Jei reikia pakeisti serverius)
+#### Configure Cluster Nodes (if servers need changing)
 
-Čia rodoma konfiguracija dabar yra default.
+Current configuration is default.
 
 **File:** [Replication/include/rules.hpp](Replication/include/rules.hpp)
 
@@ -147,7 +147,7 @@ static NodeInfo CLUSTER[] = {
 };
 ```
 
-#### Konfigūruoti HTTP Serverį (Jei reikia pakeisti serverius)
+#### Configure HTTP Server (if servers need changing)
 **File:** [server/include/routes.hpp](server/include/routes.hpp)
 
 ```cpp
@@ -158,7 +158,7 @@ const std::vector<std::string> CLUSTER_NODES = {
   "100.116.151.88:7001"   // Node 4
 };
 
-// Užsilikes map'as kai naudojame tunelius apeiti tailscale tinklą.
+// Old tunnel map (not used now, system uses direct Tailscale connection)
 static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_MAP = {
   {"100.117.80.126:8001", "100.117.80.126:8001"},  // Direct
   {"100.70.98.49:8002",   "100.70.98.49:8002"},    // Direct
@@ -166,17 +166,16 @@ static const std::unordered_map<std::string, std::string> CONTROL_PLANE_TUNNEL_M
   {"100.116.151.88:8004", "100.116.151.88:8004"}   // Direct
 };
 ```
+**Old tunnel routing: server/start_tunnels.sh is no longer used; system now uses direct Tailscale connection.**
 
-**Minėtų senų tunelių routing**: `server/start_tunnels.sh` Sistema dabar naudoja tiesioginį Tailscale ryšį.
-
-**Po konfigūracijos keitimo, reikia perkompiliuoti:**
+**After configuration changes, recompile:**
 ```bash
 cd Replication && make clean && make all
 cd ../server && make clean && make all
 ```
 
 
-### Kompiliuoti B+ Tree DB (nebūtina čia)
+### Compile B+ Tree DB (optional)
 
 ```bash
 cd btree
@@ -199,46 +198,47 @@ cd Replication
 - Node 3: Edward@167.86.83.198 (Tailscale: 100.118.80.33)
 - Node 4: Anthony@167.86.81.251 (Tailscale: 100.116.151.88)
 
-**Deploy scriptai automatiškai:**
-- Kompiliuoja lokaliai (`make all`)
-- Upload binaries per SSH
-- Sustabdo senus procesus
-- Paleidžia naujus procesus
-- Raft election vyksta automatiškai (~3 sek)
+**Deploy scripts automatically:**
+
+- Compile locally (make all)
+- Upload binaries via SSH
+- Stop old processes
+- Start new processes
+- Raft election occurs automatically (~3 sec)
 
 ```bash
 cd Replication
 
-# Turint priega prie serverio, galima duomenų bazės mazagą nužudyti
+# If you have access to a server, you can kill a database node
 ./kill.sh
 ```
 
 
-### Kompiliuoti ir Paleisti HTTP Serverį
+### Compile and Run HTTP Server
 
 ```bash
 cd server
 
-# Pirmas kartas: įdiegti Lithium framework
+# First time: setup Lithium framework
 ./scripts/setup_lithium
 
-# Kompiliuoti serverį
+# Compile server
 make all
 
-# Kompiliuoti Vue.js app
+# Compile Vue.js app
 cd webapp && npm install && npm run build && cd ..
 
-# Paleisti serverį
+# Run server
 ./server_app  # Port 8080
 ```
 
-**Prieiga**: http://localhost:8080
+**Access**: http://localhost:8080
 
-**Detalesnė dokumentacija:** [server/README.md](server/README.md)
+**Detailed documentation** [server/README.md](server/README.md)
 
 ---
 
-### VPS Port'ų Schema
+### VPS Ports Scheme
 
 | Node | Physical IP | Tailscale IP | Client Port | Repl Port | Control Port |
 |------|-------------|--------------|-------------|-----------|--------------|
@@ -247,9 +247,9 @@ cd webapp && npm install && npm run build && cd ..
 | 3 | 167.86.83.198 | 100.118.80.33 | 7001 | 7002 | 8003 |
 | 4 | 167.86.81.251 | 100.116.151.88 | 7001 | 7002 | 8004 |
 
-## Naudojimas
+## Usage
 
-### Vienos db CLI (Interaktyvus)
+### One db CLI (Interaktyvus)
 
 ```bash
 cd btree
@@ -263,7 +263,7 @@ cd btree
 > EXIT
 ```
 
-### Viso Clusterio CLI
+### Whole cluster CLI
 
 ```bash
 cd Replication
@@ -284,77 +284,77 @@ cd Replication
 ### HTTP API
 
 ```bash
-# ?nodeId parametras leidžia pasirinkti mazgą
+# ?nodeId parameter allows selecting the node
 
-# SET (turi eiti į lyderį)
+# SET (must go to leader)
 curl -X POST "http://localhost:8080/api/set/user01?nodeId=2" \
   -H "Content-Type: application/json" \
   -d '{"value":"Matas"}'
 
-# GET (gali skaityti iš bet kurio mazgo - follower reads)
-curl "http://localhost:8080/api/get/user01?nodeId=1"  # Skaityti iš Node 1
-curl "http://localhost:8080/api/get/user01?nodeId=3"  # Skaityti iš Node 3
+# GET (can read from any node - follower reads)
+curl "http://localhost:8080/api/get/user01?nodeId=1"  # Read from Node 1
+curl "http://localhost:8080/api/get/user01?nodeId=3"  # Read from Node 3
 
-# DELETE (turi eiti į lyderį)
+# DELETE (must go to leader)
 curl -X POST "http://localhost:8080/api/del/user01?nodeId=2"
 
-# Range queries su node selection
+# Range queries with node selection
 curl "http://localhost:8080/api/getff/user?count=10&nodeId=4"
 
 # Cluster info
-curl http://localhost:8080/api/cluster/status   # Klasterio būsena
+curl http://localhost:8080/api/cluster/status   # Cluster status
 ```
 
 **Node Selection Logika:**
-- **GET operacijos**: Veikia ant bet kurio mazgo (eventually consistent reads)
-- **SET/DEL operacijos**: Turi eiti į lyderį (gražina klaidą jei ne leader)
-- **Default (be nodeId)**: Automatinis leader discovery
+- **GET operacijos**: Works on any node (eventually consistent reads)
+- **SET/DEL operacijos**: Must go into leader (raises error if not leader)
+- **Default (be nodeId)**: Automatic leader discovery
 
 #### **Web GUI**
 
-1. Atidaryti naršyklę: http://localhost:8080
+1. Open browser: http://localhost:8080
 2. **Node Selection Dropdown**:
-   - Auto (Leader Discovery) - numatytasis
+   - Auto (Leader Discovery) - default
    - Node 1 (100.117.80.126)
    - Node 2 (100.70.98.49)
    - Node 3 (100.118.80.33)
    - Node 4 (100.116.151.88)
-3. Funkcijos:
-   - **CRUD** - Kurti/skaityti/atnaujinti/trinti
-   - **Cluster** - Klasterio būsena
+3. Functions:
+   - **CRUD** - Create/read/update/delete
+   - **Cluster** - Cluster status
 
-## Testavimas
+## Testing
 
 ```bash
-# Praeinama dauguma http routes, nužudomas lyderis, prikeliamas, vėl atliekami testai
+# Run through most HTTP routes, kill the leader, restart, rerun tests
 ./test_operation.sh
 ```
 
-## Technologijos
+## Technologies
 
-- **C++20** - Pagrindinis programavimo kalba
-- **B+ Tree** - Duomenų struktūra
+- **C++20** - Main programming language
+- **B+ Tree** - Data structure
 - **WAL** - Write-Ahead Logging
-- **Raft** - Consensus algoritmas (supaprastintas)
-- **TCP/IP** - Tinklo komunikacija
-- **Lithium** - HTTP serverio framework
+- **Raft** - Consensus algorithm (simplified)
+- **TCP/IP** - Network communication
+- **Lithium** - HTTP server framework
 - **Vue.js 3** - Frontend framework
 - **Bootstrap 5** - CSS framework
 - **Webpack 5** - Module bundler
 
 ## Coding Convention
 
-Sekti: https://www.geeksforgeeks.org/cpp/naming-convention-in-c/
+Follow: https://www.geeksforgeeks.org/cpp/naming-convention-in-c/
 
-## Apribojimai
+## Limitations
 
-- **Max rakto ilgis**: 255 baitai
-- **Max reikšmės ilgis**: 2048 baitai
-- **Puslapio dydis**: 16384 baitai
-- **Klasterio dydis**: 4 mazgai (fiksuotas)
+- **Max key length**: 255 bytes
+- **Max value length**: 2048 bytes
+- **Page size**: 16384 bytes
+- **Cluster size**: 4 nodes (fixed)
 - **Heartbeat timeout**: 2000ms
 
-## Žr. Taip Pat
+## See Also
 
 - [B+ Tree README](btree/README.md)
 - [Replication README](Replication/readme.md)
